@@ -1,0 +1,986 @@
+{
+  "name": "WhatsApp Business Cloud Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "responseMode": "responseNode"
+      },
+      "id": "whatsapp-webhook-node",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        480,
+        160
+      ],
+      "webhookId": "whatsapp-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.tenant_id }}",
+              "operation": "equal",
+              "value2": "={{ $env.CLIENT_TENANT_ID || 'default' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "validate-tenant-node",
+      "name": "Validate Tenant",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        680,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.hub?.mode }}",
+              "operation": "equal",
+              "value2": "subscribe"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-webhook-verification-node",
+      "name": "Check Webhook Verification",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.hub?.challenge || 'OK' }}"
+      },
+      "id": "webhook-verification-response-node",
+      "name": "Webhook Verification Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.entry?.[0]?.changes?.[0]?.value?.messages }}",
+              "operation": "notEmpty"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-incoming-message-node",
+      "name": "Check Incoming Message",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "message": "={{ $json.entry[0].changes[0].value.messages[0] }}"
+        },
+        "options": {}
+      },
+      "id": "extract-message-node",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/={{ $env.CLIENT_TENANT_ID || 'default' }}/business-knowledge",
+        "region": "={{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-business-context-node",
+      "name": "Get Business Context",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze customer message and determine intent and AI provider\nconst message = $input.first().json;\nconst businessContext = $node['Get Business Context'].json;\n\n// Extract message details\nconst messageText = (message.text?.body || '').toLowerCase();\nconst messageType = message.type || 'text';\nconst customerPhone = message.from;\n\n// Intent detection logic\nfunction detectIntent(text) {\n  const intents = {\n    greeting: ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'ola', 'oi'],\n    support: ['help', 'problem', 'issue', 'error', 'not working', 'broken', 'bug'],\n    pricing: ['price', 'cost', 'how much', 'pricing', 'payment', 'subscription'],\n    product: ['product', 'service', 'feature', 'what do you offer', 'what can you do'],\n    technical: ['api', 'integration', 'code', 'documentation', 'technical', 'developer'],\n    complaint: ['complaint', 'disappointed', 'angry', 'refund', 'cancel', 'terrible'],\n    sales: ['buy', 'purchase', 'order', 'quote', 'demo', 'trial']\n  };\n  \n  for (const [intent, keywords] of Object.entries(intents)) {\n    if (keywords.some(keyword => text.includes(keyword))) {\n      return intent;\n    }\n  }\n  return 'general';\n}\n\n// Determine best AI provider based on intent and availability\nfunction selectAIProvider(intent) {\n  const providerMap = {\n    technical: 'mistral',      // Best for technical queries\n    complaint: 'cohere',       // Best for sentiment analysis\n    pricing: 'gemini',         // Good for business queries\n    product: 'gemini',         // Good for product information\n    support: 'gemini',         // Best conversational AI\n    sales: 'gemini',           // Good for sales conversations\n    general: 'gemini'          // Default to Gemini\n  };\n  \n  return providerMap[intent] || 'gemini';\n}\n\n// Detect urgency level\nfunction detectUrgency(text) {\n  const urgentKeywords = ['urgent', 'emergency', 'immediately', 'asap', 'critical', 'broken', 'down'];\n  const highKeywords = ['important', 'soon', 'quickly', 'problem', 'issue'];\n  \n  if (urgentKeywords.some(keyword => text.includes(keyword))) return 'urgent';\n  if (highKeywords.some(keyword => text.includes(keyword))) return 'high';\n  return 'normal';\n}\n\nconst detectedIntent = detectIntent(messageText);\nconst selectedProvider = selectAIProvider(detectedIntent);\nconst urgencyLevel = detectUrgency(messageText);\n\n// Prepare data for AI processing\nreturn [{\n  json: {\n    ...message,\n    analysis: {\n      intent: detectedIntent,\n      urgency: urgencyLevel,\n      ai_provider: selectedProvider,\n      requires_ai: messageText.length > 10 && !['help'].includes(messageText), // Skip AI for simple commands\n      conversation_context: {\n        customer_phone: customerPhone,\n        message_type: messageType,\n        timestamp: new Date().toISOString()\n      }\n    },\n    business_context: businessContext\n  }\n}];"
+      },
+      "id": "analyze-customer-intent-node",
+      "name": "Analyze Customer Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.analysis.requires_ai }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-ai-needed-node",
+      "name": "Check if AI Response Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Multi-provider AI response generation with fallback\nconst data = $input.first().json;\nconst businessContext = data.business_context;\nconst analysis = data.analysis;\nconst messageText = data.text?.body || '';\n\n// Create comprehensive context for AI\nconst aiContext = `\nYou are a customer service AI for ${businessContext.company_info?.name || 'our company'}.\n\nCOMPANY CONTEXT:\n- Industry: ${businessContext.company_info?.industry || 'Service Provider'}\n- Description: ${businessContext.company_info?.description || 'We provide excellent services'}\n- Products/Services: ${(businessContext.company_info?.key_products || []).join(', ')}\n- Business Hours: ${businessContext.business_policies?.business_hours || '9 AM - 5 PM'}\n\nCONVERSATION STYLE:\n- Tone: ${businessContext.conversation_style?.tone || 'professional and friendly'}\n- Use emojis: ${businessContext.conversation_style?.use_emojis ? 'Yes' : 'No'}\n- Response length: Keep responses ${businessContext.conversation_style?.response_length || 'concise'}\n\nCUSTOMER CONTEXT:\n- Intent detected: ${analysis.intent}\n- Urgency level: ${analysis.urgency}\n- Message type: ${analysis.conversation_context.message_type}\n\nFAQs AND KNOWLEDGE:\n${(businessContext.faqs || []).map(faq => `Q: ${faq.question}\\nA: ${faq.answer}`).join('\\n\\n')}\n\nIMPORTANT GUIDELINES:\n- Always be helpful and professional\n- Provide accurate information based on the company context\n- If you don't know something, suggest contacting support\n- For urgent matters, provide immediate escalation options\n- Keep responses under 500 characters for WhatsApp\n\nCustomer message: \"${messageText}\"\n\nProvide a helpful, context-aware response:`;\n\n// Prepare API calls for different providers\nconst apiConfigs = {\n  gemini: {\n    method: 'POST',\n    url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',\n    headers: {\n      'Content-Type': 'application/json'\n    },\n    body: {\n      contents: [{\n        parts: [{ text: aiContext }]\n      }],\n      generationConfig: {\n        temperature: 0.7,\n        maxOutputTokens: 200,\n        topP: 0.8\n      }\n    },\n    apiKey: process.env.GEMINI_API_KEY\n  },\n  cohere: {\n    method: 'POST',\n    url: 'https://api.cohere.ai/v1/generate',\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${process.env.COHERE_API_KEY}`\n    },\n    body: {\n      model: 'command',\n      prompt: aiContext,\n      max_tokens: 200,\n      temperature: 0.7\n    }\n  },\n  mistral: {\n    method: 'POST',\n    url: 'https://api.mistral.ai/v1/chat/completions',\n    headers: {\n      'Content-Type': 'application/json',\n      'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`\n    },\n    body: {\n      model: 'mistral-medium',\n      messages: [{ role: 'user', content: aiContext }],\n      max_tokens: 200,\n      temperature: 0.7\n    }\n  }\n};\n\n// Return configuration for selected AI provider\nconst selectedConfig = apiConfigs[analysis.ai_provider] || apiConfigs.gemini;\n\nreturn [{\n  json: {\n    ...data,\n    ai_config: selectedConfig,\n    fallback_providers: ['gemini', 'cohere', 'mistral', 'huggingface'].filter(p => p !== analysis.ai_provider)\n  }\n}];"
+      },
+      "id": "prepare-ai-request-node",
+      "name": "Prepare AI Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.ai_config.method }}",
+        "url": "={{ $json.ai_config.url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $json.ai_config.headers.Authorization || '' }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $json.analysis.ai_provider === 'gemini' ? $env.GEMINI_API_KEY : '' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json.ai_config.body) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-ai-provider-node",
+      "name": "Call AI Provider",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1680,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI response and extract the generated text\nconst aiResponse = $input.first().json;\nconst originalData = $node['Prepare AI Request'].json;\nconst analysis = originalData.analysis;\n\nlet generatedResponse = '';\nlet success = false;\n\ntry {\n  // Parse response based on AI provider\n  switch (analysis.ai_provider) {\n    case 'gemini':\n      if (aiResponse.candidates && aiResponse.candidates[0] && aiResponse.candidates[0].content) {\n        generatedResponse = aiResponse.candidates[0].content.parts[0].text;\n        success = true;\n      }\n      break;\n      \n    case 'cohere':\n      if (aiResponse.generations && aiResponse.generations[0]) {\n        generatedResponse = aiResponse.generations[0].text;\n        success = true;\n      }\n      break;\n      \n    case 'mistral':\n      if (aiResponse.choices && aiResponse.choices[0] && aiResponse.choices[0].message) {\n        generatedResponse = aiResponse.choices[0].message.content;\n        success = true;\n      }\n      break;\n  }\n  \n  // Clean up response\n  if (success && generatedResponse) {\n    generatedResponse = generatedResponse.trim();\n    \n    // Ensure response isn't too long for WhatsApp\n    if (generatedResponse.length > 1000) {\n      generatedResponse = generatedResponse.substring(0, 997) + '...';\n    }\n    \n    // Add appropriate emojis if enabled\n    const useEmojis = originalData.business_context.conversation_style?.use_emojis;\n    if (useEmojis && !generatedResponse.match(/[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F1E0}-\\u{1F1FF}]/u)) {\n      const emojiMap = {\n        greeting: '👋',\n        support: '🛠️',\n        pricing: '💰',\n        product: '📋',\n        technical: '⚙️',\n        sales: '💼',\n        general: '💬'\n      };\n      const emoji = emojiMap[analysis.intent] || '💬';\n      generatedResponse = `${emoji} ${generatedResponse}`;\n    }\n  }\n} catch (error) {\n  console.error('Error parsing AI response:', error);\n  success = false;\n}\n\n// Fallback to business-context response if AI failed\nif (!success || !generatedResponse) {\n  const businessContext = originalData.business_context;\n  const intent = analysis.intent;\n  \n  // Generate contextual fallback responses\n  const fallbackResponses = {\n    greeting: `Hello! Welcome to ${businessContext.company_info?.name || 'our service'}. How can I help you today?`,\n    support: `I'd be happy to help you with support. You can reach our team during ${businessContext.business_policies?.business_hours || 'business hours'}.`,\n    pricing: `For pricing information about our services, please contact our sales team or visit our website.`,\n    product: `We offer ${(businessContext.company_info?.key_products || ['excellent services']).join(', ')}. What would you like to know more about?`,\n    technical: `For technical assistance, our support team can help you during ${businessContext.business_policies?.business_hours || 'business hours'}.`,\n    complaint: `I'm sorry to hear about your concern. Let me connect you with our support team to resolve this immediately.`,\n    sales: `Thank you for your interest! Our sales team would love to help you. Contact us during ${businessContext.business_policies?.business_hours || 'business hours'}.`,\n    general: `Thank you for contacting ${businessContext.company_info?.name || 'us'}. How can I assist you today?`\n  };\n  \n  generatedResponse = fallbackResponses[intent] || fallbackResponses.general;\n}\n\nreturn [{\n  json: {\n    ...originalData,\n    ai_response: {\n      text: generatedResponse,\n      provider_used: analysis.ai_provider,\n      success: success,\n      intent: analysis.intent,\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "process-ai-response-node",
+      "name": "Process AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.from }}",
+        "messageType": "text",
+        "message": "={{ $json.ai_response.text }}"
+      },
+      "id": "send-ai-response-node",
+      "name": "Send AI Response",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AI Provider Fallback System - Try backup providers if primary fails\nconst originalData = $input.first().json;\nconst analysis = originalData.analysis;\nconst errorMessage = originalData.error || 'API request failed';\n\n// Get next available provider from fallback chain\nconst fallbackProviders = originalData.fallback_providers || ['cohere', 'mistral'];\nconst nextProvider = fallbackProviders[0];\n\nif (!nextProvider) {\n  // No more providers to try, use fallback response\n  const businessContext = originalData.business_context;\n  const intent = analysis.intent;\n  \n  const fallbackResponses = {\n    greeting: `Hello! Welcome to ${businessContext.company_info?.name || 'our service'}. How can I help you today? 👋`,\n    support: `I'd be happy to help you with support. You can reach our team during ${businessContext.business_policies?.business_hours || 'business hours'}. 🛠️`,\n    pricing: `For pricing information about our services, please contact our sales team or visit our website. 💰`,\n    product: `We offer ${(businessContext.company_info?.key_products || ['excellent services']).join(', ')}. What would you like to know more about? 📋`,\n    technical: `For technical assistance, our support team can help you during ${businessContext.business_policies?.business_hours || 'business hours'}. ⚙️`,\n    complaint: `I'm sorry to hear about your concern. Let me connect you with our support team to resolve this immediately. 🛠️`,\n    sales: `Thank you for your interest! Our sales team would love to help you. Contact us during ${businessContext.business_policies?.business_hours || 'business hours'}. 💼`,\n    general: `Thank you for contacting ${businessContext.company_info?.name || 'us'}. How can I assist you today? 💬`\n  };\n  \n  return [{\n    json: {\n      ...originalData,\n      ai_response: {\n        text: fallbackResponses[intent] || fallbackResponses.general,\n        provider_used: 'fallback',\n        success: true,\n        intent: analysis.intent,\n        timestamp: new Date().toISOString()\n      }\n    }\n  }];\n}\n\n// Update analysis to use next provider\nconst updatedAnalysis = {\n  ...analysis,\n  ai_provider: nextProvider\n};\n\n// Remove used provider from fallback chain\nconst remainingProviders = fallbackProviders.slice(1);\n\nreturn [{\n  json: {\n    ...originalData,\n    analysis: updatedAnalysis,\n    fallback_providers: remainingProviders,\n    retry_attempt: (originalData.retry_attempt || 0) + 1\n  }\n}];"
+      },
+      "id": "ai-fallback-handler-node",
+      "name": "AI Fallback Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "whatsapp_conversations",
+          "mode": "list"
+        },
+        "columns": [
+          {
+            "column": "tenant_id",
+            "value": "default"
+          },
+          {
+            "column": "customer_phone",
+            "value": "={{ $json.from }}"
+          },
+          {
+            "column": "message_type",
+            "value": "text"
+          },
+          {
+            "column": "customer_message",
+            "value": "={{ $json.text?.body || 'Message' }}"
+          },
+          {
+            "column": "ai_response",
+            "value": "={{ $json.ai_response?.text || 'Response' }}"
+          },
+          {
+            "column": "intent_detected",
+            "value": "general"
+          },
+          {
+            "column": "ai_provider_used",
+            "value": "gemini"
+          },
+          {
+            "column": "urgency_level",
+            "value": "normal"
+          },
+          {
+            "column": "response_success",
+            "value": true
+          },
+          {
+            "column": "conversation_timestamp",
+            "value": "={{ $now }}"
+          }
+        ],
+        "options": {}
+      },
+      "id": "log-conversation-analytics-node",
+      "name": "Log Conversation Analytics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        200
+      ],
+      "credentials": {
+        "postgres": "n8n-database"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.type }}",
+              "operation": "equal",
+              "value2": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-text-message-node",
+      "name": "Check Text Message",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.from }}",
+        "messageType": "text",
+        "message": "Thank you for your message: \"{{ $json.text.body }}\"\n\nI'm {{ $env.CLIENT_TENANT_ID || 'Default' }} Bot. How can I assist you today?\n\nAvailable commands:\n• *help* - Show available options\n• *status* - Check service status\n• *contact* - Contact support"
+      },
+      "id": "send-text-reply-node",
+      "name": "Send Text Reply",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.type }}",
+              "operation": "equal",
+              "value2": "image"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-image-message-node",
+      "name": "Check Image Message",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.from }}",
+        "messageType": "text",
+        "message": "📸 I received your image! Image processing is available for {{ $env.CLIENT_TENANT_ID || 'Default' }} clients.\n\nImage ID: {{ $json.image.id }}\nFile Size: {{ $json.image.mime_type }}\n\nWould you like me to process this image?"
+      },
+      "id": "send-image-reply-node",
+      "name": "Send Image Reply",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.text?.body?.toLowerCase() }}",
+              "operation": "contains",
+              "value2": "help"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-help-command-node",
+      "name": "Check Help Command",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.from }}",
+        "messageType": "template",
+        "template": {
+          "name": "help_menu",
+          "language": {
+            "code": "en"
+          },
+          "components": [
+            {
+              "type": "body",
+              "parameters": [
+                {
+                  "type": "text",
+                  "text": "Default"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "send-help-template-node",
+      "name": "Send Help Template",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "operation": "equal",
+              "value2": "send_notification"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-notification-trigger-node",
+      "name": "Check Notification Trigger",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.to }}",
+        "messageType": "text",
+        "message": "🔔 *{{ $json.title || 'Notification' }}*\n\n{{ $json.message }}\n\n_From: {{ $env.CLIENT_TENANT_ID || 'Default' }}_\n_Time: {{ $now.toDateTime() }}_"
+      },
+      "id": "send-notification-node",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "operation": "equal",
+              "value2": "send_template"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-template-trigger-node",
+      "name": "Check Template Trigger",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.to }}",
+        "messageType": "template",
+        "template": {
+          "name": "={{ $json.template_name }}",
+          "language": {
+            "code": "={{ $json.language || 'en' }}"
+          },
+          "components": []
+        }
+      },
+      "id": "send-template-message-node",
+      "name": "Send Template Message",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "operation": "equal",
+              "value2": "send_media"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-media-trigger-node",
+      "name": "Check Media Trigger",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_NUMBER_ID }}",
+        "to": "={{ $json.to }}",
+        "messageType": "={{ $json.media_type || 'image' }}",
+        "media": {
+          "link": "={{ $json.media_url }}",
+          "caption": "={{ $json.caption || '' }}"
+        }
+      },
+      "id": "send-media-message-node",
+      "name": "Send Media Message",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "interaction": "={{ $json }}"
+        },
+        "options": {}
+      },
+      "id": "log-interaction-node",
+      "name": "Log Interaction",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"success\": true, \"message\": \"WhatsApp interaction processed\", \"tenant_id\": $json.tenant_id || 'default', \"timestamp\": $now.toDateTime(), \"action\": $json.action || 'message_received', \"phone_number\": $json.from || $json.to} }}"
+      },
+      "id": "webhook-response-node",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"success\": false, \"error\": \"Unauthorized tenant\", \"tenant_id\": $json.tenant_id || 'unknown', \"timestamp\": $now.toDateTime()} }}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "unauthorized-response-node",
+      "name": "Unauthorized Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        880,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tenant": {
+      "main": [
+        [
+          {
+            "node": "Check Webhook Verification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Incoming Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Notification Trigger",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Template Trigger",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Media Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Webhook Verification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Verification Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Incoming Message": {
+      "main": [
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Get Business Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Business Context": {
+      "main": [
+        [
+          {
+            "node": "Analyze Customer Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Customer Intent": {
+      "main": [
+        [
+          {
+            "node": "Check if AI Response Needed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Text Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Image Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Help Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if AI Response Needed": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Request": {
+      "main": [
+        [
+          {
+            "node": "Call AI Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call AI Provider": {
+      "main": [
+        [
+          {
+            "node": "Process AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "AI Fallback Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process AI Response": {
+      "main": [
+        [
+          {
+            "node": "Send AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send AI Response": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Fallback Handler": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Conversation Analytics": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Text Message": {
+      "main": [
+        [
+          {
+            "node": "Send Text Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Image Message": {
+      "main": [
+        [
+          {
+            "node": "Send Image Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Help Command": {
+      "main": [
+        [
+          {
+            "node": "Send Help Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Notification Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Template Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Template Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Template Message": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Media Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Media Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Media Message": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Interaction": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "webhook-error-handler"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "whatsapp-automation",
+      "name": "WhatsApp Business"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-18T00:00:00.000Z",
+  "versionId": "1"
+}

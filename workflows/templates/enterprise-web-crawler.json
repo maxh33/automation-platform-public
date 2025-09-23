@@ -1,0 +1,779 @@
+{
+  "name": "Enterprise Web Crawler with Scrapy",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crawler",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "enterprise-crawler-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant_validation",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "start_urls_validation",
+              "leftValue": "={{ $json.start_urls }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": \"Missing required fields: tenant_id and start_urls\", \"status\": 400} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 420]
+    },    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extract-config",
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "start-urls",
+              "name": "start_urls",
+              "value": "={{ $json.start_urls }}",
+              "type": "array"
+            },
+            {
+              "id": "crawl-rules",
+              "name": "crawl_rules",
+              "value": "={{ $json.crawl_rules || {} }}",
+              "type": "object"
+            },
+            {
+              "id": "max-depth",
+              "name": "max_depth",
+              "value": "={{ $json.max_depth || 3 }}",
+              "type": "number"
+            },
+            {
+              "id": "max-pages",
+              "name": "max_pages",
+              "value": "={{ $json.max_pages || 100 }}",
+              "type": "number"
+            },
+            {
+              "id": "delay-range",
+              "name": "delay_range",
+              "value": "={{ $json.delay_range || [1, 3] }}",
+              "type": "array"
+            },
+            {
+              "id": "extraction-rules",
+              "name": "extraction_rules",
+              "value": "={{ $json.extraction_rules || {} }}",
+              "type": "object"
+            },
+            {
+              "id": "respect-robots",
+              "name": "respect_robots_txt",
+              "value": "={{ $json.respect_robots_txt !== false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-parameters",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Scrapy spider configuration\nconst config = {\n  tenant_id: $json.tenant_id,\n  start_urls: $json.start_urls,\n  max_depth: $json.max_depth,\n  max_pages: $json.max_pages,\n  delay_range: $json.delay_range,\n  respect_robots_txt: $json.respect_robots_txt,\n  \n  // Default crawl rules if not provided\n  crawl_rules: $json.crawl_rules.rules || [\n    {\n      \"link_extractor\": {\n        \"allow\": [\".*\"],\n        \"deny\": [\"\\.pdf$\", \"\\.jpg$\", \"\\.png$\", \"\\.gif$\"]\n      },\n      \"callback\": \"parse_item\",\n      \"follow\": true\n    }\n  ],\n  \n  // Default extraction rules if not provided\n  extraction_rules: $json.extraction_rules.selectors || {\n    \"title\": \"title::text\",\n    \"meta_description\": \"meta[name='description']::attr(content)\",\n    \"h1\": \"h1::text\",\n    \"h2\": \"h2::text\",\n    \"links\": \"a::attr(href)\",\n    \"images\": \"img::attr(src)\",\n    \"content\": \"p::text\"\n  },\n  \n  // Scrapy settings\n  scrapy_settings: {\n    \"USER_AGENT\": \"Mozilla/5.0 (compatible; AutomationBot/1.0)\",\n    \"ROBOTSTXT_OBEY\": $json.respect_robots_txt,\n    \"CONCURRENT_REQUESTS\": 16,\n    \"CONCURRENT_REQUESTS_PER_DOMAIN\": 8,\n    \"DOWNLOAD_DELAY\": $json.delay_range[0],\n    \"RANDOMIZE_DOWNLOAD_DELAY\": 0.5,\n    \"AUTOTHROTTLE_ENABLED\": true,\n    \"AUTOTHROTTLE_START_DELAY\": 1,\n    \"AUTOTHROTTLE_MAX_DELAY\": 60,\n    \"AUTOTHROTTLE_TARGET_CONCURRENCY\": 1.0,\n    \"CLOSESPIDER_PAGECOUNT\": $json.max_pages,\n    \"DEPTH_LIMIT\": $json.max_depth\n  }\n};\n\nreturn {\n  crawler_config: config,\n  job_id: `crawler_${$json.tenant_id}_${Date.now()}`,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "generate-scrapy-config",
+      "name": "Generate Scrapy Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 180]
+    },    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO crawl_jobs (tenant_id, job_id, config, status, created_at) VALUES ($1, $2, $3, 'queued', NOW()) RETURNING id",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.crawler_config.tenant_id }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $json.job_id }}"
+            },
+            {
+              "name": "config",
+              "value": "={{ JSON.stringify($json.crawler_config) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-crawl-job",
+      "name": "Create Crawl Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 180],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "docker run --rm -d --name scrapy_{{ $('Generate Scrapy Config').item.json.job_id }} --network automation-platform_automation_network -v /tmp/scrapy_output:/app/output scrapy/scrapyd:latest",
+        "options": {}
+      },
+      "id": "start-scrapy-container",
+      "name": "Start Scrapy Container",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "url": "http://scrapy_{{ $('Generate Scrapy Config').item.json.job_id }}:6800/schedule.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project",
+              "value": "automation_crawler"
+            },
+            {
+              "name": "spider",
+              "value": "enterprise_spider"
+            },
+            {
+              "name": "start_urls",
+              "value": "={{ $('Generate Scrapy Config').item.json.crawler_config.start_urls.join(',') }}"
+            },
+            {
+              "name": "extraction_rules",
+              "value": "={{ JSON.stringify($('Generate Scrapy Config').item.json.crawler_config.extraction_rules) }}"
+            },
+            {
+              "name": "crawl_rules",
+              "value": "={{ JSON.stringify($('Generate Scrapy Config').item.json.crawler_config.crawl_rules) }}"
+            },
+            {
+              "name": "scrapy_settings",
+              "value": "={{ JSON.stringify($('Generate Scrapy Config').item.json.crawler_config.scrapy_settings) }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $('Generate Scrapy Config').item.json.job_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "schedule-scrapy-job",
+      "name": "Schedule Scrapy Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 180]
+    },    {
+      "parameters": {
+        "jsCode": "// Parse Scrapy job scheduling response\nconst response = $input.all()[0].json;\n\nif (response.status === 'ok') {\n  return {\n    success: true,\n    scrapy_job_id: response.jobid,\n    job_id: $('Generate Scrapy Config').item.json.job_id,\n    message: 'Crawl job scheduled successfully',\n    timestamp: new Date().toISOString()\n  };\n} else {\n  return {\n    success: false,\n    error: 'Failed to schedule Scrapy job',\n    scrapy_response: response,\n    timestamp: new Date().toISOString()\n  };\n}"
+      },
+      "id": "process-scrapy-response",
+      "name": "Process Scrapy Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "job-success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-job-status",
+      "name": "Check Job Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_jobs SET scrapy_job_id = $1, status = 'running', started_at = NOW() WHERE job_id = $2",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "scrapy_job_id",
+              "value": "={{ $json.scrapy_job_id }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $json.job_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-job-status-running",
+      "name": "Update Job Status - Running",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2220, 120],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_jobs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE job_id = $2",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "error_message",
+              "value": "={{ $json.error || 'Unknown error' }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $('Generate Scrapy Config').item.json.job_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-job-status-failed",
+      "name": "Update Job Status - Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2220, 240],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-for-initial-results",
+      "name": "Wait for Initial Results",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2440, 120]
+    },
+    {
+      "parameters": {
+        "url": "http://scrapy_{{ $('Process Scrapy Response').item.json.job_id }}:6800/listjobs.json?project=automation_crawler",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "check-scrapy-job-status",
+      "name": "Check Scrapy Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if Scrapy job is completed\nconst response = $input.all()[0]?.json || {};\nconst targetJobId = $('Process Scrapy Response').item?.json?.scrapy_job_id;\n\nif (!targetJobId) {\n  return {\n    error: 'Missing Scrapy job ID',\n    job_completed: false\n  };\n}\n\n// Check finished jobs\nconst finishedJobs = Array.isArray(response.finished) ? response.finished : [];\nconst targetJob = finishedJobs.find(job => job && job.id === targetJobId);\n\nif (targetJob) {\n  return {\n    job_completed: true,\n    job_id: $('Process Scrapy Response').item?.json?.job_id,\n    scrapy_job_id: targetJobId,\n    scrapy_status: targetJob,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Check running jobs\nconst runningJobs = Array.isArray(response.running) ? response.running : [];\nconst runningJob = runningJobs.find(job => job && job.id === targetJobId);\n\nif (runningJob) {\n  return {\n    job_completed: false,\n    job_running: true,\n    job_id: $('Process Scrapy Response').item?.json?.job_id,\n    scrapy_job_id: targetJobId,\n    scrapy_status: runningJob,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Check pending jobs\nconst pendingJobs = Array.isArray(response.pending) ? response.pending : [];\nconst pendingJob = pendingJobs.find(job => job && job.id === targetJobId);\n\nreturn {\n  job_completed: false,\n  job_running: false,\n  job_pending: !!pendingJob,\n  job_id: $('Process Scrapy Response').item?.json?.job_id,\n  scrapy_job_id: targetJobId,\n  scrapy_status: pendingJob || null,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "process-job-status",
+      "name": "Process Job Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "completion-check",
+              "leftValue": "={{ $json.job_completed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-completion",
+      "name": "Check Completion",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3100, 120]
+    },    {
+      "parameters": {
+        "command": "docker cp scrapy_{{ $json.job_id }}:/app/output/. /tmp/scrapy_results/{{ $json.job_id }}/",
+        "options": {}
+      },
+      "id": "retrieve-results",
+      "name": "Retrieve Results",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [3320, 80]
+    },
+    {
+      "parameters": {
+        "filePath": "/tmp/scrapy_results/{{ $('Process Job Status').item.json.job_id }}/items.jsonl",
+        "options": {
+          "encoding": "utf8"
+        }
+      },
+      "id": "read-scraped-data",
+      "name": "Read Scraped Data",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [3540, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process JSONL scraped data\nconst fileData = $input.all()[0]?.binary?.data;\n\nif (!fileData) {\n  return {\n    error: 'No scraped data received',\n    scraped_items: [],\n    total_items: 0,\n    processing_completed: false\n  };\n}\n\nconst content = Buffer.from(fileData, 'base64').toString('utf8');\nconst items = [];\n\nif (content && content.trim()) {\n  const lines = content.split('\\n').filter(line => line && line.trim());\n  \n  for (const line of lines) {\n    try {\n      const item = JSON.parse(line);\n      if (item) {\n        items.push(item);\n      }\n    } catch (error) {\n      console.log('Error parsing line:', line, error);\n    }\n  }\n}\n\nreturn {\n  scraped_items: items,\n  total_items: items.length,\n  job_id: $('Process Job Status').item?.json?.job_id,\n  processing_completed: true,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "process-scraped-data",
+      "name": "Process Scraped Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3760, 80]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_jobs SET status = 'completed', results_count = $1, completed_at = NOW() WHERE job_id = $2",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "results_count",
+              "value": "={{ $json.total_items }}"
+            },
+            {
+              "name": "job_id",
+              "value": "={{ $json.job_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-job-completed",
+      "name": "Update Job Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3980, 80],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"job_id\": $json.job_id,\n  \"total_items\": $json.total_items,\n  \"message\": \"Crawl completed successfully\",\n  \"scraped_data\": $json.scraped_items.slice(0, 10),\n  \"timestamp\": $json.timestamp\n} }}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4200, 80]
+    },    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  \"success\": true,\n  \"job_id\": $('Process Scrapy Response').item.json.job_id,\n  \"scrapy_job_id\": $('Process Scrapy Response').item.json.scrapy_job_id,\n  \"status\": \"running\",\n  \"message\": \"Crawl job is still running. Check status later.\",\n  \"check_url\": \"/webhook/crawler-status?job_id=\" + $('Process Scrapy Response').item.json.job_id,\n  \"timestamp\": new Date().toISOString()\n} }}",
+        "options": {}
+      },
+      "id": "running-response",
+      "name": "Running Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3320, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": $json.error || \"Crawl job failed\", \"success\": false, \"timestamp\": new Date().toISOString()} }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-crawl-response",
+      "name": "Error Crawl Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 240]
+    },
+    {
+      "parameters": {
+        "command": "docker stop scrapy_{{ $('Process Job Status').item.json.job_id }} && docker rm scrapy_{{ $('Process Job Status').item.json.job_id }}",
+        "options": {}
+      },
+      "id": "cleanup-container",
+      "name": "Cleanup Container",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [4200, 160]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Generate Scrapy Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Scrapy Config": {
+      "main": [
+        [
+          {
+            "node": "Create Crawl Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Crawl Job": {
+      "main": [
+        [
+          {
+            "node": "Start Scrapy Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Scrapy Container": {
+      "main": [
+        [
+          {
+            "node": "Schedule Scrapy Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Scrapy Job": {
+      "main": [
+        [
+          {
+            "node": "Process Scrapy Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Scrapy Response": {
+      "main": [
+        [
+          {
+            "node": "Check Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Job Status": {
+      "main": [
+        [
+          {
+            "node": "Update Job Status - Running",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Job Status - Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },    "Update Job Status - Running": {
+      "main": [
+        [
+          {
+            "node": "Wait for Initial Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Status - Failed": {
+      "main": [
+        [
+          {
+            "node": "Error Crawl Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Initial Results": {
+      "main": [
+        [
+          {
+            "node": "Check Scrapy Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Scrapy Job Status": {
+      "main": [
+        [
+          {
+            "node": "Process Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Job Status": {
+      "main": [
+        [
+          {
+            "node": "Check Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Completion": {
+      "main": [
+        [
+          {
+            "node": "Retrieve Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Running Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve Results": {
+      "main": [
+        [
+          {
+            "node": "Read Scraped Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Scraped Data": {
+      "main": [
+        [
+          {
+            "node": "Process Scraped Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Scraped Data": {
+      "main": [
+        [
+          {
+            "node": "Update Job Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Completed": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Response": {
+      "main": [
+        [
+          {
+            "node": "Cleanup Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "web-crawling",
+      "name": "web-crawling"
+    },
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "enterprise",
+      "name": "enterprise"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

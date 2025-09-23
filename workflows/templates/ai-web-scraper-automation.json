@@ -1,0 +1,828 @@
+{
+  "name": "AI-Powered Web Scraper Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-scraper",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "ai-scraper-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant_validation",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "url_validation", 
+              "leftValue": "={{ $json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": \"Missing required fields: tenant_id and url\", \"status\": 400} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extract-config",
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "target-url",
+              "name": "target_url", 
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "scrape-mode",
+              "name": "scrape_mode",
+              "value": "={{ $json.scrape_mode || 'smart' }}",
+              "type": "string"
+            },
+            {
+              "id": "extraction-schema",
+              "name": "extraction_schema",
+              "value": "={{ $json.extraction_schema || {} }}",
+              "type": "object"
+            },
+            {
+              "id": "ai-instructions",
+              "name": "ai_instructions",
+              "value": "={{ $json.ai_instructions || 'Extract key information from this webpage' }}",
+              "type": "string"
+            },
+            {
+              "id": "output-format",
+              "name": "output_format",
+              "value": "={{ $json.output_format || 'json' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-parameters",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "mode-check",
+              "leftValue": "={{ $json.scrape_mode }}",
+              "rightValue": "smart",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-scrape-mode",
+      "name": "Check Scrape Mode",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 180]
+    },    {
+      "parameters": {
+        "url": "http://crawl4ai:11235/crawl",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "urls",
+              "value": "={{ [$json.target_url] }}"
+            },
+            {
+              "name": "word_count_threshold",
+              "value": "={{ $json.word_threshold || 10 }}"
+            },
+            {
+              "name": "extraction_strategy",
+              "value": "LLMExtractionStrategy"
+            },
+            {
+              "name": "extraction_strategy_args",
+              "value": "={{ { \"provider\": \"openai/gpt-4o-mini\", \"api_token\": $vars.GEMINI_API_KEY, \"instruction\": $json.ai_instructions, \"schema\": $json.extraction_schema } }}"
+            },
+            {
+              "name": "chunking_strategy",
+              "value": "RegexChunking"
+            },
+            {
+              "name": "css_selector",
+              "value": "={{ $json.css_selector || null }}"
+            },
+            {
+              "name": "wait_for",
+              "value": "={{ $json.wait_for || null }}"
+            },
+            {
+              "name": "user_agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "crawl4ai-scraper",
+      "name": "Crawl4AI Smart Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 120]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.target_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "followRedirect": true,
+          "retry": {
+            "enabled": true,
+            "maxTries": 2
+          }
+        }
+      },
+      "id": "basic-http-scraper",
+      "name": "Basic HTTP Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Crawl4AI response and extract structured data\nconst response = $input.all()[0].json;\n\nif (response.success && response.results && response.results.length > 0) {\n  const result = response.results[0];\n  \n  return {\n    success: true,\n    url: result.url,\n    title: result.metadata?.title || '',\n    description: result.metadata?.description || '',\n    extracted_content: result.extracted_content,\n    structured_data: result.extracted_content?.schema || {},\n    links: result.links || [],\n    images: result.media?.images || [],\n    word_count: result.statistics?.word_count || 0,\n    processing_time: result.statistics?.processing_time || 0,\n    extraction_method: 'crawl4ai_smart',\n    timestamp: new Date().toISOString()\n  };\n} else {\n  return {\n    success: false,\n    error: response.error || 'Failed to extract content',\n    extraction_method: 'crawl4ai_smart',\n    timestamp: new Date().toISOString()\n  };\n}"
+      },
+      "id": "process-crawl4ai-response",
+      "name": "Process Crawl4AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 120]
+    },    {
+      "parameters": {
+        "jsCode": "// Process basic HTTP response and extract content using HTML parsing\nconst cheerio = require('cheerio');\nconst response = $input.all()[0];\n\nif (response.statusCode === 200) {\n  const html = response.body;\n  const $ = cheerio.load(html);\n  \n  // Extract basic metadata\n  const title = $('title').text() || $('meta[property=\"og:title\"]').attr('content') || '';\n  const description = $('meta[name=\"description\"]').attr('content') || $('meta[property=\"og:description\"]').attr('content') || '';\n  \n  // Extract main content (common content selectors)\n  const contentSelectors = ['main', 'article', '.content', '#content', '.post-content', '.entry-content'];\n  let mainContent = '';\n  \n  for (const selector of contentSelectors) {\n    const content = $(selector).text().trim();\n    if (content && content.length > mainContent.length) {\n      mainContent = content;\n    }\n  }\n  \n  // Fallback to body if no main content found\n  if (!mainContent) {\n    mainContent = $('body').text().replace(/\\s+/g, ' ').trim();\n  }\n  \n  // Extract links and images\n  const links = [];\n  $('a[href]').each((i, el) => {\n    const href = $(el).attr('href');\n    const text = $(el).text().trim();\n    if (href && text) {\n      links.push({ url: href, text: text });\n    }\n  });\n  \n  const images = [];\n  $('img[src]').each((i, el) => {\n    const src = $(el).attr('src');\n    const alt = $(el).attr('alt') || '';\n    if (src) {\n      images.push({ url: src, alt: alt });\n    }\n  });\n  \n  return {\n    success: true,\n    url: response.url,\n    title: title,\n    description: description,\n    extracted_content: {\n      text: mainContent.substring(0, 5000), // Limit content size\n      html: html.substring(0, 10000)\n    },\n    structured_data: {\n      links_count: links.length,\n      images_count: images.length\n    },\n    links: links.slice(0, 50), // Limit links\n    images: images.slice(0, 20), // Limit images\n    word_count: mainContent.split(' ').length,\n    processing_time: Date.now(),\n    extraction_method: 'basic_http',\n    timestamp: new Date().toISOString()\n  };\n} else {\n  return {\n    success: false,\n    error: `HTTP ${response.statusCode}: ${response.statusMessage}`,\n    extraction_method: 'basic_http',\n    timestamp: new Date().toISOString()\n  };\n}"
+      },
+      "id": "process-basic-response",
+      "name": "Process Basic Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 240]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1560, 180]
+    },    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-extraction-success",
+      "name": "Check Extraction Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ai-enhancement-check",
+              "leftValue": "={{ $json.extraction_method }}",
+              "rightValue": "basic_http",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-ai-enhancement-needed",
+      "name": "Check AI Enhancement Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 120]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ai-provider-selection",
+              "name": "selected_provider",
+              "value": "gemini",
+              "type": "string"
+            },
+            {
+              "id": "content-for-ai",
+              "name": "content_text",
+              "value": "={{ $json.extracted_content?.text || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "enhancement-prompt",
+              "name": "enhancement_prompt",
+              "value": "Analyze and enhance this web content. Extract key information, summarize main points, identify important data, and structure the response according to user requirements: {{ $('Extract Parameters').item.json.ai_instructions }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-ai-enhancement",
+      "name": "Prepare AI Enhancement",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2220, 60]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "useCustomApiKey": true,
+        "customApiKey": "={{ $vars.GEMINI_API_KEY }}",
+        "prompt": "={{ $json.enhancement_prompt }}\\n\\nContent to analyze:\\n{{ $json.content_text }}",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2000
+        }
+      },
+      "id": "enhance-with-gemini",
+      "name": "Enhance with Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [2440, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine original extraction with AI enhancement\nconst originalData = $('Merge Results').item.json;\nconst aiEnhancement = $input.all()[0].json;\n\nreturn {\n  ...originalData,\n  ai_enhanced: true,\n  ai_analysis: {\n    summary: aiEnhancement.response || aiEnhancement.text || '',\n    enhancement_timestamp: new Date().toISOString(),\n    ai_provider: 'gemini'\n  },\n  processing_completed: true\n};"
+      },
+      "id": "combine-with-ai-enhancement",
+      "name": "Combine with AI Enhancement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 60]
+    },    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mark-no-enhancement",
+              "name": "ai_enhanced",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "mark-completed",
+              "name": "processing_completed",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mark-no-ai-enhancement",
+      "name": "Mark No AI Enhancement",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2220, 180]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "final-merge",
+      "name": "Final Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2880, 120]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scraping_results (tenant_id, url, title, success, extracted_data, ai_enhanced, extraction_method, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "tenant_id",
+              "value": "={{ $('Extract Parameters').item.json.tenant_id }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "success",
+              "value": "={{ $json.success }}"
+            },
+            {
+              "name": "extracted_data",
+              "value": "={{ JSON.stringify($json) }}"
+            },
+            {
+              "name": "ai_enhanced",
+              "value": "={{ $json.ai_enhanced }}"
+            },
+            {
+              "name": "extraction_method",
+              "value": "={{ $json.extraction_method }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "store-results",
+      "name": "Store Results",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3100, 120],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "format-check",
+              "leftValue": "={{ $('Extract Parameters').item.json.output_format }}",
+              "rightValue": "json",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-output-format",
+      "name": "Check Output Format",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3320, 120]
+    },    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "json-response",
+      "name": "JSON Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3540, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert to CSV format\nconst data = $input.all()[0].json;\n\n// Create CSV headers\nconst headers = ['URL', 'Title', 'Success', 'Word Count', 'Extraction Method', 'AI Enhanced', 'Timestamp'];\n\n// Create CSV row\nconst row = [\n  data.url || '',\n  (data.title || '').replace(/\"/g, '\"\"'), // Escape quotes\n  data.success || false,\n  data.word_count || 0,\n  data.extraction_method || '',\n  data.ai_enhanced || false,\n  data.timestamp || ''\n];\n\n// Format as CSV\nconst csvContent = headers.join(',') + '\\n' + row.map(field => \n  typeof field === 'string' && field.includes(',') ? `\"${field}\"` : field\n).join(',');\n\nreturn {\n  csv_content: csvContent,\n  filename: `scraper_result_${Date.now()}.csv`\n};"
+      },
+      "id": "convert-to-csv",
+      "name": "Convert to CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.csv_content }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/csv"
+              },
+              {
+                "name": "Content-Disposition",
+                "value": "attachment; filename={{ $json.filename }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "csv-response",
+      "name": "CSV Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3760, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": $json.error || \"Extraction failed\", \"success\": false, \"timestamp\": new Date().toISOString()} }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-extraction-response",
+      "name": "Error Extraction Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Check Scrape Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Scrape Mode": {
+      "main": [
+        [
+          {
+            "node": "Crawl4AI Smart Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Basic HTTP Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },    "Crawl4AI Smart Scraper": {
+      "main": [
+        [
+          {
+            "node": "Process Crawl4AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic HTTP Scraper": {
+      "main": [
+        [
+          {
+            "node": "Process Basic Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Crawl4AI Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Basic Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Check Extraction Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Extraction Success": {
+      "main": [
+        [
+          {
+            "node": "Check AI Enhancement Needed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Extraction Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check AI Enhancement Needed": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark No AI Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Enhance with Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhance with Gemini": {
+      "main": [
+        [
+          {
+            "node": "Combine with AI Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine with AI Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Final Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark No AI Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Final Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },    "Final Merge": {
+      "main": [
+        [
+          {
+            "node": "Store Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Results": {
+      "main": [
+        [
+          {
+            "node": "Check Output Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Output Format": {
+      "main": [
+        [
+          {
+            "node": "JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Convert to CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to CSV": {
+      "main": [
+        [
+          {
+            "node": "CSV Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "web-scraping",
+      "name": "web-scraping"
+    },
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z", 
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "ai-powered",
+      "name": "ai-powered"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

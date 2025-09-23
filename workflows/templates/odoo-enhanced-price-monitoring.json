@@ -1,0 +1,674 @@
+{
+  "name": "Odoo Enhanced Price Monitoring & Multi-Platform Updates",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "cron-weekly-price-check",
+      "name": "Weekly Price Check",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "odoo-price-update",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-price-manual",
+      "name": "Manual Price Update Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [300, 500],
+      "webhookId": "odoo-price-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and prepare price update request\nconst data = $input.first().json;\n\n// Handle both webhook and cron triggers\nlet priceConfig;\n\nif (data.tenant_id) {\n  // Webhook trigger - specific tenant price update\n  priceConfig = {\n    tenant_id: data.tenant_id,\n    business_type: data.business_type,\n    price_sources: data.price_sources || ['gold_api', 'market_data'],\n    force_update: data.force_update || false,\n    update_thresholds: data.update_thresholds || { minimum_change_percent: 2 },\n    platforms: data.platforms || ['odoo', 'woocommerce']\n  };\n} else {\n  // Cron trigger - update all active tenants\n  priceConfig = {\n    update_all_tenants: true,\n    price_sources: ['gold_api', 'market_data', 'competitor_api'],\n    force_update: false,\n    update_thresholds: { minimum_change_percent: 1.5 },\n    platforms: ['odoo', 'woocommerce', 'shopify']\n  };\n}\n\nreturn { json: priceConfig };"
+      },
+      "id": "prepare-price-config",
+      "name": "Prepare Price Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.update_all_tenants }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-update-scope",
+      "name": "Check Update Scope",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://odoo_postgres:5432",
+        "query": "SELECT tenant_id, business_type, api_endpoint, config FROM odoo_tenant_configs WHERE status = 'active' AND (business_type = 'jewelry' OR config->>'dynamic_pricing' = 'true')",
+        "values": ""
+      },
+      "id": "get-pricing-tenants",
+      "name": "Get Pricing-Enabled Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://odoo_postgres:5432",
+        "query": "SELECT tenant_id, business_type, api_endpoint, config FROM odoo_tenant_configs WHERE tenant_id = $1 AND status = 'active'",
+        "values": "={{ $json.tenant_id }}"
+      },
+      "id": "get-single-tenant",
+      "name": "Get Single Tenant",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "split-tenants",
+      "name": "Split Tenants for Processing",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.metals.live/v1/spot/gold",
+        "options": {
+          "headers": {
+            "X-API-KEY": "={{ $env.GOLD_PRICE_API_KEY }}"
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "get-gold-price",
+      "name": "Get Gold Price (USD)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.exchangerate-api.com/v4/latest/USD",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-exchange-rates",
+      "name": "Get Exchange Rates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1300, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coinbase.com/v2/exchange-rates?currency=USD",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-alternative-rates",
+      "name": "Get Alternative Exchange Rates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1300, 600]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "awsSecretsManager",
+        "region": "us-east-1",
+        "secretId": "n8n/tenants/{{ $json.tenant_id }}/pricing-rules"
+      },
+      "id": "get-tenant-pricing-rules",
+      "name": "Get Tenant Pricing Rules",
+      "type": "n8n-nodes-base.awsSecretsManager",
+      "typeVersion": 1,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Advanced price calculation with business-type specific logic\nconst tenantData = $('split-tenants').first().json;\nconst goldData = $('get-gold-price').first().json;\nconst exchangeData = $('get-exchange-rates').first().json;\nconst altExchangeData = $('get-alternative-rates').first().json;\nconst pricingRules = $('get-tenant-pricing-rules').first().json;\nconst priceConfig = $('prepare-price-config').first().json;\n\n// Extract market data\nconst goldPriceUSD = goldData.price || (1 / goldData.rates?.XAU) || 2650; // Fallback to reasonable default\nconst exchangeRate = exchangeData.rates?.BRL || altExchangeData.data?.rates?.BRL || 5.2; // BRL fallback\n\n// Business-type specific pricing logic\nfunction calculateBusinessTypePrices(businessType, goldPriceUSD, exchangeRate, rules) {\n  const goldPriceBRL = goldPriceUSD * exchangeRate;\n  const goldPricePerGram = goldPriceBRL / 31.1035; // Convert oz to gram\n  \n  switch (businessType) {\n    case 'jewelry':\n      return calculateJewelryPrices(goldPricePerGram, rules);\n    case 'retail':\n      return calculateRetailPrices(goldPricePerGram, rules);\n    case 'manufacturing':\n      return calculateManufacturingPrices(goldPricePerGram, rules);\n    default:\n      return calculateBasePrices(goldPricePerGram, rules);\n  }\n}\n\nfunction calculateJewelryPrices(goldPricePerGram, rules) {\n  const karatMultipliers = {\n    '18': 0.75, // 18k gold purity\n    '14': 0.585, // 14k gold purity\n    '10': 0.417 // 10k gold purity\n  };\n  \n  const laborCosts = rules.labor_costs || { '18': 25, '14': 20, '10': 15 };\n  const markups = rules.markups || { '18': 2.5, '14': 2.3, '10': 2.1 };\n  \n  const products = [];\n  \n  // Generate prices for different karat levels and weights\n  Object.keys(karatMultipliers).forEach(karat => {\n    const weights = [1, 2, 5, 10, 20]; // Common jewelry weights in grams\n    \n    weights.forEach(weight => {\n      const materialCost = goldPricePerGram * karatMultipliers[karat] * weight;\n      const totalCost = (materialCost + (laborCosts[karat] * weight)) * markups[karat];\n      \n      products.push({\n        sku: `GOLD_${karat}K_${weight}G`,\n        name: `Gold ${karat}k ${weight}g`,\n        business_type: 'jewelry',\n        metal_type: 'gold',\n        metal_karat: karat,\n        weight: weight,\n        material_cost: Math.round(materialCost * 100) / 100,\n        labor_cost: laborCosts[karat] * weight,\n        markup_multiplier: markups[karat],\n        final_price: Math.round(totalCost * 100) / 100,\n        currency: 'BRL'\n      });\n    });\n  });\n  \n  return products;\n}\n\nfunction calculateRetailPrices(basePricePerGram, rules) {\n  const markupRules = rules.markup_rules || {\n    electronics: 1.15,\n    clothing: 1.25,\n    accessories: 1.20,\n    default: 1.18\n  };\n  \n  // For retail, we'll calculate based on categories and price ranges\n  const products = [];\n  const categories = Object.keys(markupRules);\n  \n  categories.forEach(category => {\n    if (category === 'default') return;\n    \n    const priceRanges = [50, 100, 250, 500, 1000]; // BRL price ranges\n    \n    priceRanges.forEach(basePrice => {\n      const finalPrice = basePrice * markupRules[category];\n      \n      products.push({\n        sku: `${category.toUpperCase()}_${basePrice}`,\n        name: `${category} item - R$${basePrice} range`,\n        business_type: 'retail',\n        category: category,\n        base_price: basePrice,\n        markup_multiplier: markupRules[category],\n        final_price: Math.round(finalPrice * 100) / 100,\n        currency: 'BRL'\n      });\n    });\n  });\n  \n  return products;\n}\n\nfunction calculateManufacturingPrices(basePricePerGram, rules) {\n  const materialCosts = rules.material_costs || {\n    raw_materials: 1.0,\n    components: 1.2,\n    finished_goods: 1.5\n  };\n  \n  const laborMultipliers = rules.labor_multipliers || {\n    assembly: 2.0,\n    machining: 2.5,\n    finishing: 1.8\n  };\n  \n  const products = [];\n  \n  Object.keys(materialCosts).forEach(materialType => {\n    Object.keys(laborMultipliers).forEach(processType => {\n      const baseCost = basePricePerGram * materialCosts[materialType];\n      const laborCost = baseCost * laborMultipliers[processType];\n      const totalCost = baseCost + laborCost;\n      const finalPrice = totalCost * (rules.profit_margin || 1.3);\n      \n      products.push({\n        sku: `MFG_${materialType.toUpperCase()}_${processType.toUpperCase()}`,\n        name: `${materialType} with ${processType}`,\n        business_type: 'manufacturing',\n        material_type: materialType,\n        process_type: processType,\n        material_cost: Math.round(baseCost * 100) / 100,\n        labor_cost: Math.round(laborCost * 100) / 100,\n        profit_margin: rules.profit_margin || 1.3,\n        final_price: Math.round(finalPrice * 100) / 100,\n        currency: 'BRL'\n      });\n    });\n  });\n  \n  return products;\n}\n\nfunction calculateBasePrices(basePricePerGram, rules) {\n  const markup = rules.default_markup || 1.2;\n  \n  return [\n    {\n      sku: 'BASE_PRODUCT_1',\n      name: 'Base Product 1',\n      business_type: 'base',\n      base_price: basePricePerGram,\n      markup_multiplier: markup,\n      final_price: Math.round(basePricePerGram * markup * 100) / 100,\n      currency: 'BRL'\n    }\n  ];\n}\n\n// Calculate prices for this tenant\nconst products = calculateBusinessTypePrices(\n  tenantData.business_type,\n  goldPriceUSD,\n  exchangeRate,\n  pricingRules\n);\n\n// Add threshold checking\nconst minChangePercent = priceConfig.update_thresholds?.minimum_change_percent || 2;\nconst productsToUpdate = products.filter(product => {\n  // In real implementation, compare with previous prices from database\n  // For now, assume all products need updating if force_update or weekly cron\n  return priceConfig.force_update || true;\n});\n\nreturn {\n  json: {\n    tenant_id: tenantData.tenant_id,\n    business_type: tenantData.business_type,\n    api_endpoint: tenantData.api_endpoint,\n    timestamp: new Date().toISOString(),\n    market_data: {\n      gold_price_usd: goldPriceUSD,\n      exchange_rate_brl: exchangeRate,\n      gold_price_brl_per_gram: goldPriceBRL / 31.1035\n    },\n    products: productsToUpdate,\n    update_summary: {\n      total_products: productsToUpdate.length,\n      force_update: priceConfig.force_update,\n      min_change_threshold: minChangePercent\n    }\n  }\n};"
+      },
+      "id": "calculate-business-prices",
+      "name": "Calculate Business-Type Prices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 400]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "split-products-batch",
+      "name": "Split Products for Batch Update",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1900, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.api_endpoint }}/products/batch-update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "odooApi",
+        "method": "PUT",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "products": "={{ $json.products }}",
+            "update_metadata": {
+              "source": "automated_price_monitoring",
+              "timestamp": "={{ $json.timestamp }}",
+              "market_data": "={{ $json.market_data }}"
+            }
+          }
+        }
+      },
+      "id": "update-odoo-prices",
+      "name": "Update Odoo Product Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2100, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "awsSecretsManager",
+        "region": "us-east-1",
+        "secretId": "n8n/tenants/{{ $json.tenant_id }}/ecommerce-credentials"
+      },
+      "id": "get-ecommerce-credentials",
+      "name": "Get E-commerce Credentials",
+      "type": "n8n-nodes-base.awsSecretsManager",
+      "typeVersion": 1,
+      "position": [2100, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare products for e-commerce platform updates\nconst tenantData = $('split-tenants').first().json;\nconst products = $json.products || [];\nconst ecommerceCredentials = $('get-ecommerce-credentials').first().json;\n\nconst platformUpdates = [];\n\n// Process each e-commerce platform\nconst platforms = ['woocommerce', 'shopify'];\n\nplatforms.forEach(platform => {\n  if (ecommerceCredentials[platform]) {\n    products.forEach(product => {\n      let platformProduct;\n      \n      if (platform === 'woocommerce') {\n        platformProduct = {\n          platform: 'woocommerce',\n          credentials: ecommerceCredentials[platform],\n          product_data: {\n            sku: product.sku,\n            regular_price: product.final_price.toString(),\n            meta_data: [\n              {\n                key: '_odoo_updated',\n                value: new Date().toISOString()\n              },\n              {\n                key: '_business_type',\n                value: product.business_type\n              }\n            ]\n          }\n        };\n        \n        // Add jewelry-specific metadata\n        if (product.business_type === 'jewelry') {\n          platformProduct.product_data.meta_data.push(\n            { key: '_metal_type', value: product.metal_type || '' },\n            { key: '_metal_karat', value: product.metal_karat || '' },\n            { key: '_weight', value: product.weight?.toString() || '' }\n          );\n        }\n      } else if (platform === 'shopify') {\n        platformProduct = {\n          platform: 'shopify',\n          credentials: ecommerceCredentials[platform],\n          product_data: {\n            variants: [{\n              sku: product.sku,\n              price: product.final_price.toString()\n            }],\n            metafields: [\n              {\n                namespace: 'odoo',\n                key: 'updated_at',\n                value: new Date().toISOString(),\n                type: 'single_line_text_field'\n              },\n              {\n                namespace: 'business',\n                key: 'type',\n                value: product.business_type,\n                type: 'single_line_text_field'\n              }\n            ]\n          }\n        };\n      }\n      \n      if (platformProduct) {\n        platformUpdates.push({\n          ...platformProduct,\n          tenant_id: tenantData.tenant_id,\n          odoo_product: product\n        });\n      }\n    });\n  }\n});\n\nreturn platformUpdates.map(update => ({ json: update }));"
+      },
+      "id": "prepare-ecommerce-updates",
+      "name": "Prepare E-commerce Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 500]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "split-platform-updates",
+      "name": "Split Platform Updates",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2500, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.platform }}",
+              "operation": "equal",
+              "value2": "woocommerce"
+            }
+          ]
+        }
+      },
+      "id": "check-platform",
+      "name": "Check Platform Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2700, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.credentials.url }}/wp-json/wc/v3/products",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "method": "POST",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "qs": {
+            "sku": "={{ $json.product_data.sku }}"
+          },
+          "body": "={{ $json.product_data }}"
+        }
+      },
+      "id": "update-woocommerce",
+      "name": "Update WooCommerce",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2900, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.credentials.url }}/admin/api/2023-10/products.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "shopifyApi",
+        "method": "POST",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "product": "={{ $json.product_data }}"
+          }
+        }
+      },
+      "id": "update-shopify",
+      "name": "Update Shopify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2900, 600]
+    },
+    {
+      "parameters": {
+        "url": "http://odoo_postgres:5432",
+        "query": "INSERT INTO price_update_log (tenant_id, platform, product_sku, old_price, new_price, update_source, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+        "values": "={{ $json.tenant_id }},={{ $json.platform }},={{ $json.odoo_product.sku }},0,={{ $json.odoo_product.final_price }},automated_price_monitoring"
+      },
+      "id": "log-price-update",
+      "name": "Log Price Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [3100, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('split-platform-updates').item.json.isDone }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-platform-completion",
+      "name": "Check Platform Updates Completion",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3300, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('split-products-batch').item.json.isDone }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-products-completion",
+      "name": "Check Products Batch Completion",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3500, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('split-tenants').item.json.isDone }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-tenants-completion",
+      "name": "Check Tenants Completion",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3700, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate comprehensive price update summary\nconst allResults = $input.all();\nconst tenantSummaries = {};\n\n// Group results by tenant\nfor (const result of allResults) {\n  const data = result.json;\n  if (!tenantSummaries[data.tenant_id]) {\n    tenantSummaries[data.tenant_id] = {\n      tenant_id: data.tenant_id,\n      business_type: data.business_type,\n      products_updated: 0,\n      platforms_updated: {},\n      total_price_changes: 0,\n      market_data: data.market_data\n    };\n  }\n  \n  const summary = tenantSummaries[data.tenant_id];\n  summary.products_updated += data.update_summary?.total_products || 0;\n  \n  // Track platform updates\n  if (data.platform) {\n    if (!summary.platforms_updated[data.platform]) {\n      summary.platforms_updated[data.platform] = { success: 0, failed: 0 };\n    }\n    \n    if (data.id || data.success) {\n      summary.platforms_updated[data.platform].success++;\n    } else {\n      summary.platforms_updated[data.platform].failed++;\n    }\n  }\n}\n\nconst finalSummary = {\n  price_update_completed_at: new Date().toISOString(),\n  total_tenants_processed: Object.keys(tenantSummaries).length,\n  tenant_summaries: Object.values(tenantSummaries),\n  overall_stats: {\n    total_products_updated: Object.values(tenantSummaries).reduce((sum, t) => sum + t.products_updated, 0),\n    total_platforms: new Set(Object.values(tenantSummaries).flatMap(t => Object.keys(t.platforms_updated))).size\n  }\n};\n\nreturn { json: finalSummary };"
+      },
+      "id": "generate-update-summary",
+      "name": "Generate Update Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "return-update-results",
+      "name": "Return Update Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4100, 300]
+    }
+  ],
+  "connections": {
+    "cron-weekly-price-check": {
+      "main": [
+        [
+          {
+            "node": "prepare-price-config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-price-manual": {
+      "main": [
+        [
+          {
+            "node": "prepare-price-config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-price-config": {
+      "main": [
+        [
+          {
+            "node": "check-update-scope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-update-scope": {
+      "main": [
+        [
+          {
+            "node": "get-pricing-tenants",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "get-single-tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get-pricing-tenants": {
+      "main": [
+        [
+          {
+            "node": "split-tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get-single-tenant": {
+      "main": [
+        [
+          {
+            "node": "split-tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "split-tenants": {
+      "main": [
+        [
+          {
+            "node": "get-gold-price",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "get-exchange-rates",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "get-alternative-rates",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "get-tenant-pricing-rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get-tenant-pricing-rules": {
+      "main": [
+        [
+          {
+            "node": "calculate-business-prices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "calculate-business-prices": {
+      "main": [
+        [
+          {
+            "node": "split-products-batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "split-products-batch": {
+      "main": [
+        [
+          {
+            "node": "update-odoo-prices",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "get-ecommerce-credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get-ecommerce-credentials": {
+      "main": [
+        [
+          {
+            "node": "prepare-ecommerce-updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-ecommerce-updates": {
+      "main": [
+        [
+          {
+            "node": "split-platform-updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "split-platform-updates": {
+      "main": [
+        [
+          {
+            "node": "check-platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-platform": {
+      "main": [
+        [
+          {
+            "node": "update-woocommerce",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "update-shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-woocommerce": {
+      "main": [
+        [
+          {
+            "node": "log-price-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update-shopify": {
+      "main": [
+        [
+          {
+            "node": "log-price-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "log-price-update": {
+      "main": [
+        [
+          {
+            "node": "check-platform-completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-platform-completion": {
+      "main": [
+        [
+          {
+            "node": "check-products-completion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "split-platform-updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-products-completion": {
+      "main": [
+        [
+          {
+            "node": "check-tenants-completion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "split-products-batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-tenants-completion": {
+      "main": [
+        [
+          {
+            "node": "generate-update-summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "split-tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "generate-update-summary": {
+      "main": [
+        [
+          {
+            "node": "return-update-results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

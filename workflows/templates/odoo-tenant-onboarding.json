@@ -1,0 +1,395 @@
+{
+  "name": "Odoo Multi-Tenant Onboarding Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "odoo-onboard-tenant",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-tenant-onboarding",
+      "name": "Tenant Onboarding Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [300, 300],
+      "webhookId": "odoo-onboard-tenant"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate tenant onboarding request\nconst data = $input.first().json;\n\n// Required fields validation\nconst requiredFields = ['tenant_id', 'business_type', 'tenant_name', 'admin_email'];\nconst missingFields = requiredFields.filter(field => !data[field]);\n\nif (missingFields.length > 0) {\n  throw new Error(`Missing required fields: ${missingFields.join(', ')}`);\n}\n\n// Validate business type\nconst validBusinessTypes = ['jewelry', 'retail', 'manufacturing', 'services', 'base'];\nif (!validBusinessTypes.includes(data.business_type)) {\n  throw new Error(`Invalid business_type. Must be one of: ${validBusinessTypes.join(', ')}`);\n}\n\n// Sanitize tenant_id (lowercase, alphanumeric, hyphens only)\nconst sanitizedTenantId = data.tenant_id\n  .toLowerCase()\n  .replace(/[^a-z0-9-]/g, '-')\n  .replace(/-+/g, '-')\n  .replace(/^-|-$/g, '');\n\nif (sanitizedTenantId !== data.tenant_id) {\n  console.log(`Tenant ID sanitized from '${data.tenant_id}' to '${sanitizedTenantId}'`);\n}\n\n// Prepare tenant configuration\nconst tenantConfig = {\n  tenant_id: sanitizedTenantId,\n  original_tenant_id: data.tenant_id,\n  business_type: data.business_type,\n  tenant_name: data.tenant_name,\n  admin_email: data.admin_email,\n  database_name: `tenant_${data.business_type}_${sanitizedTenantId}`,\n  subdomain: `${sanitizedTenantId}.odoo.your-domain.com`,\n  api_endpoint: `https://api.odoo.your-domain.com/tenant/${sanitizedTenantId}`,\n  created_at: new Date().toISOString(),\n  status: 'provisioning',\n  template_config: {\n    modules: data.modules || [],\n    pricing_rules: data.pricing_rules || {},\n    integration_settings: data.integration_settings || {},\n    demo_data: data.include_demo_data || false\n  }\n};\n\nreturn { json: tenantConfig };"
+      },
+      "id": "validate-tenant-request",
+      "name": "Validate & Prepare Tenant Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://odoo_postgres:5432",
+        "query": "INSERT INTO odoo_tenant_configs (tenant_id, tenant_name, business_type, database_name, subdomain, api_endpoint, config, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
+        "values": "={{ $json.tenant_id }},={{ $json.tenant_name }},={{ $json.business_type }},={{ $json.database_name }},={{ $json.subdomain }},={{ $json.api_endpoint }},={{ JSON.stringify($json.template_config) }},={{ $json.status }},={{ $json.created_at }}"
+      },
+      "id": "insert-tenant-config",
+      "name": "Store Tenant Configuration",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "command": "createDatabase",
+        "database": "={{ $json.database_name }}",
+        "additionalFields": {
+          "options": {
+            "template": "template_{{ $json.business_type }}"
+          }
+        }
+      },
+      "id": "create-tenant-database",
+      "name": "Create Tenant Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://odoo.your-domain.com/api/v1/tenants",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "odooApi",
+        "method": "POST",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "tenant_id": "={{ $json.tenant_id }}",
+            "database_name": "={{ $json.database_name }}",
+            "business_type": "={{ $json.business_type }}",
+            "subdomain": "={{ $json.subdomain }}",
+            "admin_email": "={{ $json.admin_email }}",
+            "template_config": "={{ $json.template_config }}"
+          }
+        }
+      },
+      "id": "register-with-odoo",
+      "name": "Register Tenant with Odoo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Load business-type specific workflow templates\nconst businessType = $json.business_type;\nconst tenantId = $json.tenant_id;\n\n// Define workflow templates per business type\nconst workflowTemplates = {\n  jewelry: [\n    'gold-price-automation',\n    'jewelry-inventory-alerts',\n    'precious-metals-reporting'\n  ],\n  retail: [\n    'inventory-reorder-automation',\n    'multi-channel-sync',\n    'sales-analytics-reporting'\n  ],\n  manufacturing: [\n    'bom-cost-tracking',\n    'production-scheduling',\n    'supply-chain-alerts'\n  ],\n  services: [\n    'project-milestone-tracking',\n    'time-billing-automation',\n    'client-reporting'\n  ],\n  base: [\n    'basic-inventory-alerts',\n    'financial-reporting'\n  ]\n};\n\nconst templates = workflowTemplates[businessType] || workflowTemplates.base;\n\nconst workflowJobs = templates.map(template => ({\n  tenant_id: tenantId,\n  template_name: template,\n  workflow_url: `https://automation.your-domain.com/webhook/${tenantId}-${template}`,\n  status: 'pending_deployment'\n}));\n\nreturn workflowJobs.map(job => ({ json: job }));"
+      },
+      "id": "prepare-workflow-templates",
+      "name": "Prepare Business-Type Workflows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "split-workflow-jobs",
+      "name": "Split Workflow Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://automation.your-domain.com/api/v1/workflows/deploy-template",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "method": "POST",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "tenant_id": "={{ $json.tenant_id }}",
+            "template_name": "={{ $json.template_name }}",
+            "webhook_url": "={{ $json.workflow_url }}"
+          }
+        }
+      },
+      "id": "deploy-workflow-template",
+      "name": "Deploy Workflow Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "equal",
+              "value2": "success"
+            }
+          ]
+        }
+      },
+      "id": "check-deployment-status",
+      "name": "Check Deployment Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "awsSecretsManager",
+        "region": "us-east-1",
+        "secretId": "n8n/tenants/{{ $json.tenant_id }}/admin-credentials",
+        "secretValue": "{\n  \"admin_email\": \"{{ $json.admin_email }}\",\n  \"tenant_id\": \"{{ $json.tenant_id }}\",\n  \"business_type\": \"{{ $json.business_type }}\",\n  \"database_name\": \"{{ $json.database_name }}\",\n  \"api_endpoint\": \"{{ $json.api_endpoint }}\",\n  \"subdomain\": \"{{ $json.subdomain }}\",\n  \"created_at\": \"{{ $json.created_at }}\"\n}"
+      },
+      "id": "store-tenant-credentials",
+      "name": "Store Tenant Credentials",
+      "type": "n8n-nodes-base.awsSecretsManager",
+      "typeVersion": 1,
+      "position": [2100, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "emailProvider",
+        "to": "={{ $json.admin_email }}",
+        "subject": "Welcome to Your Odoo ERP Platform - {{ $json.tenant_name }}",
+        "emailFormat": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <style>\n        body { font-family: Arial, sans-serif; line-height: 1.6; }\n        .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n        .header { background: #1f2937; color: white; padding: 20px; text-align: center; }\n        .content { padding: 20px; background: #f9fafb; }\n        .credentials { background: white; padding: 15px; border-left: 4px solid #10b981; margin: 15px 0; }\n        .button { display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 10px 0; }\n        .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"header\">\n            <h1>🎉 Welcome to Your Odoo ERP Platform</h1>\n        </div>\n        <div class=\"content\">\n            <h2>Hello {{ $json.tenant_name }}!</h2>\n            <p>Your multi-tenant Odoo ERP platform has been successfully provisioned and is ready for use.</p>\n            \n            <div class=\"credentials\">\n                <h3>🔧 Your Platform Details:</h3>\n                <p><strong>Tenant ID:</strong> {{ $json.tenant_id }}</p>\n                <p><strong>Business Type:</strong> {{ $json.business_type }}</p>\n                <p><strong>Platform URL:</strong> <a href=\"{{ $json.subdomain }}\">{{ $json.subdomain }}</a></p>\n                <p><strong>API Endpoint:</strong> {{ $json.api_endpoint }}</p>\n                <p><strong>Database:</strong> {{ $json.database_name }}</p>\n            </div>\n            \n            <h3>🚀 Next Steps:</h3>\n            <ol>\n                <li>Access your Odoo platform using the URL above</li>\n                <li>Use your admin credentials to log in</li>\n                <li>Review the pre-configured modules for your business type</li>\n                <li>Import your existing data using the migration tools</li>\n                <li>Configure your business-specific automation workflows</li>\n            </ol>\n            \n            <div style=\"text-align: center; margin: 30px 0;\">\n                <a href=\"{{ $json.subdomain }}\" class=\"button\">Access Your Odoo Platform</a>\n            </div>\n            \n            <h3>🔗 Automation Workflows Available:</h3>\n            <p>Your business type ({{ $json.business_type }}) includes specialized automation workflows:</p>\n            <ul>\n                <li>Automated inventory management</li>\n                <li>Real-time price synchronization</li>\n                <li>Business intelligence reporting</li>\n                <li>Multi-channel e-commerce integration</li>\n            </ul>\n            \n            <h3>📞 Support & Documentation:</h3>\n            <p>Need help getting started? Our support team is here to help:</p>\n            <ul>\n                <li>📖 <a href=\"https://docs.your-domain.com/odoo\">Documentation Center</a></li>\n                <li>💬 <a href=\"mailto:support@your-domain.com\">Email Support</a></li>\n                <li>🎯 <a href=\"https://automation.your-domain.com/webhook/{{ $json.tenant_id }}-support\">Submit Support Ticket</a></li>\n            </ul>\n        </div>\n        <div class=\"footer\">\n            <p>This platform is managed by Max Haider's Multi-Tenant ERP Services</p>\n            <p>For technical support, contact: support@your-domain.com</p>\n        </div>\n    </div>\n</body>\n</html>"
+      },
+      "id": "send-welcome-email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2100, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.database_name }}",
+        "query": "UPDATE odoo_tenant_configs SET status = 'active', activated_at = NOW() WHERE tenant_id = $1",
+        "values": "={{ $json.tenant_id }}"
+      },
+      "id": "mark-tenant-active",
+      "name": "Mark Tenant as Active",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2300, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Tenant successfully onboarded\",\n  \"tenant\": {\n    \"tenant_id\": \"{{ $json.tenant_id }}\",\n    \"tenant_name\": \"{{ $json.tenant_name }}\",\n    \"business_type\": \"{{ $json.business_type }}\",\n    \"platform_url\": \"{{ $json.subdomain }}\",\n    \"api_endpoint\": \"{{ $json.api_endpoint }}\",\n    \"database\": \"{{ $json.database_name }}\",\n    \"status\": \"active\",\n    \"created_at\": \"{{ $json.created_at }}\"\n  }\n}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"error\",\n  \"message\": \"Failed to deploy workflow templates\",\n  \"tenant_id\": \"{{ $json.tenant_id }}\",\n  \"error\": \"{{ $json.error || 'Unknown deployment error' }}\"\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2100, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('split-workflow-jobs').item.json.isDone }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-batch-completion",
+      "name": "Check Batch Completion",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1700, 500]
+    }
+  ],
+  "connections": {
+    "webhook-tenant-onboarding": {
+      "main": [
+        [
+          {
+            "node": "validate-tenant-request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate-tenant-request": {
+      "main": [
+        [
+          {
+            "node": "insert-tenant-config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insert-tenant-config": {
+      "main": [
+        [
+          {
+            "node": "create-tenant-database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create-tenant-database": {
+      "main": [
+        [
+          {
+            "node": "register-with-odoo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "register-with-odoo": {
+      "main": [
+        [
+          {
+            "node": "prepare-workflow-templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare-workflow-templates": {
+      "main": [
+        [
+          {
+            "node": "split-workflow-jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "split-workflow-jobs": {
+      "main": [
+        [
+          {
+            "node": "deploy-workflow-template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deploy-workflow-template": {
+      "main": [
+        [
+          {
+            "node": "check-deployment-status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-deployment-status": {
+      "main": [
+        [
+          {
+            "node": "store-tenant-credentials",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "send-welcome-email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "store-tenant-credentials": {
+      "main": [
+        [
+          {
+            "node": "mark-tenant-active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send-welcome-email": {
+      "main": [
+        [
+          {
+            "node": "mark-tenant-active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "mark-tenant-active": {
+      "main": [
+        [
+          {
+            "node": "success-response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check-batch-completion": {
+      "main": [
+        [
+          {
+            "node": "check-deployment-status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "split-workflow-jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

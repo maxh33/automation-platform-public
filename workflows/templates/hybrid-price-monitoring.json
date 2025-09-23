@@ -1,0 +1,859 @@
+{
+  "name": "Hybrid Price Monitoring Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "price-monitor",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "price-monitor-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant_validation",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            },
+            {
+              "id": "products_validation",
+              "leftValue": "={{ $json.products }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": \"Missing required fields: tenant_id and products array\", \"status\": 400} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 420]
+    },    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extract-config",
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}",
+              "type": "string"
+            },
+            {
+              "id": "products-list",
+              "name": "products",
+              "value": "={{ $json.products }}",
+              "type": "array"
+            },
+            {
+              "id": "monitoring-config",
+              "name": "monitoring_config",
+              "value": "={{ $json.monitoring_config || {} }}",
+              "type": "object"
+            },
+            {
+              "id": "markup-rules",
+              "name": "markup_rules",
+              "value": "={{ $json.markup_rules || {} }}",
+              "type": "object"
+            },
+            {
+              "id": "notification-settings",
+              "name": "notification_settings",
+              "value": "={{ $json.notification_settings || {} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-parameters",
+      "name": "Extract Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "fieldsToSplitOut": "products",
+        "options": {}
+      },
+      "id": "split-products",
+      "name": "Split Products",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze product URL and determine optimal scraping strategy\nconst product = $json.products || {};\nconst url = product.url || '';\n\nif (!url) {\n  return {\n    error: 'Product URL is required',\n    success: false\n  };\n}\n\nlet domain = '';\ntry {\n  domain = new URL(url).hostname;\n} catch (error) {\n  return {\n    error: 'Invalid URL format',\n    success: false\n  };\n}\n\n// Define strategy rules based on website characteristics\nconst strategyRules = {\n  // AI-first strategy for complex e-commerce sites\n  'ai_first': [\n    'amazon.com', 'amazon.com.br', 'mercadolivre.com.br', 'alibaba.com',\n    'shopify.com', 'woocommerce.com', 'magento.com'\n  ],\n  \n  // Scrapy-first for simpler, consistent sites\n  'scrapy_first': [\n    'americanas.com.br', 'submarino.com.br', 'casasbahia.com.br',\n    'extra.com.br', 'pontofrio.com.br'\n  ],\n  \n  // Hybrid approach for medium complexity\n  'hybrid': [\n    'ebay.com', 'etsy.com', 'walmart.com', 'target.com'\n  ]\n};\n\n// Determine strategy safely\nlet strategy = 'ai_first'; // Default to AI-first\nconst strategyEntries = Object.entries(strategyRules);\nfor (const [strategyType, domains] of strategyEntries) {\n  if (Array.isArray(domains) && domains.some(d => domain.includes(d))) {\n    strategy = strategyType;\n    break;\n  }\n}\n\n// Generate extraction configuration based on product type\nconst extractionConfig = {\n  title: product.title_selector || 'h1, .product-title, [data-testid=\"product-title\"]',\n  price: product.price_selector || '.price, .product-price, [data-testid=\"price\"], .a-price-whole',\n  availability: product.availability_selector || '.availability, .stock-status, [data-testid=\"availability\"]',\n  description: product.description_selector || '.description, .product-description',\n  images: product.images_selector || 'img[src*=\"product\"], .product-image img',\n  rating: product.rating_selector || '.rating, .stars, [data-testid=\"rating\"]'\n};\n\nreturn {\n  product_id: product.id || `product_${Date.now()}`,\n  product_name: product.name,\n  product_url: url,\n  domain: domain,\n  scraping_strategy: strategy,\n  extraction_config: extractionConfig,\n  tenant_id: $('Extract Parameters').item.json.tenant_id,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "analyze-product-strategy",
+      "name": "Analyze Product Strategy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 180]
+    },    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "strategy-check",
+              "leftValue": "={{ $json.scraping_strategy }}",
+              "rightValue": "ai_first",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-strategy",
+      "name": "Check Strategy",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "url": "http://crawl4ai:11235/crawl",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "urls",
+              "value": "={{ [$json.product_url] }}"
+            },
+            {
+              "name": "extraction_strategy",
+              "value": "LLMExtractionStrategy"
+            },
+            {
+              "name": "extraction_strategy_args",
+              "value": "={{ {\n  \"provider\": \"openai/gpt-4o-mini\",\n  \"api_token\": $vars.GEMINI_API_KEY,\n  \"instruction\": \"Extract product information including: title, current price (convert to number), original price if available, availability status, product description, and any discount information. Focus on accurate price extraction.\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"title\": {\"type\": \"string\"},\n      \"current_price\": {\"type\": \"number\"},\n      \"original_price\": {\"type\": \"number\"},\n      \"currency\": {\"type\": \"string\"},\n      \"availability\": {\"type\": \"string\"},\n      \"description\": {\"type\": \"string\"},\n      \"discount_percentage\": {\"type\": \"number\"},\n      \"rating\": {\"type\": \"number\"}\n    }\n  }\n} }}"
+            },
+            {
+              "name": "user_agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            },
+            {
+              "name": "wait_for",
+              "value": "{{ $json.extraction_config.wait_for || null }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 2
+          }
+        }
+      },
+      "id": "crawl4ai-price-extraction",
+      "name": "Crawl4AI Price Extraction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 120]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.product_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "followRedirect": true,
+          "retry": {
+            "enabled": true,
+            "maxTries": 2
+          }
+        }
+      },
+      "id": "scrapy-price-extraction",
+      "name": "Scrapy Price Extraction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 240]
+    },    {
+      "parameters": {
+        "jsCode": "// Process Crawl4AI response for price data\nconst response = $input.all()[0].json;\nconst productData = $('Analyze Product Strategy').item.json;\n\nif (response.success && response.results && response.results.length > 0) {\n  const result = response.results[0];\n  const extractedData = result.extracted_content;\n  \n  // Parse the structured data\n  let productInfo = {};\n  try {\n    productInfo = typeof extractedData === 'string' ? JSON.parse(extractedData) : extractedData;\n  } catch (error) {\n    console.log('Error parsing extracted data:', error);\n    productInfo = {};\n  }\n  \n  return {\n    success: true,\n    product_id: productData.product_id,\n    product_name: productData.product_name,\n    url: productData.product_url,\n    title: productInfo.title || '',\n    current_price: productInfo.current_price || 0,\n    original_price: productInfo.original_price || productInfo.current_price || 0,\n    currency: productInfo.currency || 'BRL',\n    availability: productInfo.availability || 'unknown',\n    description: productInfo.description || '',\n    discount_percentage: productInfo.discount_percentage || 0,\n    rating: productInfo.rating || 0,\n    extraction_method: 'crawl4ai_ai',\n    tenant_id: productData.tenant_id,\n    timestamp: new Date().toISOString()\n  };\n} else {\n  return {\n    success: false,\n    product_id: productData.product_id,\n    url: productData.product_url,\n    error: response.error || 'Failed to extract price data',\n    extraction_method: 'crawl4ai_ai',\n    tenant_id: productData.tenant_id,\n    timestamp: new Date().toISOString()\n  };\n}"
+      },
+      "id": "process-crawl4ai-price",
+      "name": "Process Crawl4AI Price",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Scrapy response with manual parsing\nconst cheerio = require('cheerio');\nconst response = $input.all()[0];\nconst productData = $('Analyze Product Strategy').item.json;\nconst config = productData.extraction_config;\n\nif (response.statusCode === 200) {\n  const html = response.body;\n  const $ = cheerio.load(html);\n  \n  // Extract title\n  const title = $(config.title).first().text().trim() || $('h1').first().text().trim();\n  \n  // Extract price with multiple strategies\n  let currentPrice = 0;\n  let originalPrice = 0;\n  let currency = 'BRL';\n  \n  // Try configured price selector first\n  let priceText = $(config.price).first().text().trim();\n  \n  // Fallback price selectors if configured one fails\n  if (!priceText) {\n    const priceSelectors = [\n      '.price', '.product-price', '[data-testid=\"price\"]',\n      '.a-price-whole', '.money', '.currency', '.valor'\n    ];\n    \n    for (const selector of priceSelectors) {\n      priceText = $(selector).first().text().trim();\n      if (priceText) break;\n    }\n  }\n  \n  // Parse price from text\n  if (priceText) {\n    // Remove currency symbols and extract numbers\n    const priceMatch = priceText.match(/([R\\$\\$€£¥])\\s*([\\d.,]+)/i);\n    if (priceMatch) {\n      currency = priceMatch[1] === 'R$' ? 'BRL' : priceMatch[1];\n      currentPrice = parseFloat(priceMatch[2].replace(/[.,]/g, match => match === ',' ? '.' : ''));\n    } else {\n      // Fallback: extract just numbers\n      const numberMatch = priceText.match(/([\\d.,]+)/);\n      if (numberMatch) {\n        currentPrice = parseFloat(numberMatch[1].replace(/[.,]/g, match => match === ',' ? '.' : ''));\n      }\n    }\n  }\n  \n  // Extract availability\n  const availability = $(config.availability).first().text().trim() || 'unknown';\n  \n  // Extract description\n  const description = $(config.description).first().text().trim().substring(0, 500);\n  \n  // Extract rating\n  let rating = 0;\n  const ratingText = $(config.rating).first().text().trim();\n  if (ratingText) {\n    const ratingMatch = ratingText.match(/([\\d.]+)/);\n    if (ratingMatch) {\n      rating = parseFloat(ratingMatch[1]);\n    }\n  }\n  \n  return {\n    success: true,\n    product_id: productData.product_id,\n    product_name: productData.product_name,\n    url: productData.product_url,\n    title: title,\n    current_price: currentPrice,\n    original_price: originalPrice || currentPrice,\n    currency: currency,\n    availability: availability,\n    description: description,\n    discount_percentage: 0,\n    rating: rating,\n    extraction_method: 'scrapy_manual',\n    tenant_id: productData.tenant_id,\n    timestamp: new Date().toISOString()\n  };\n} else {\n  return {\n    success: false,\n    product_id: productData.product_id,\n    url: productData.product_url,\n    error: `HTTP ${response.statusCode}: ${response.statusMessage}`,\n    extraction_method: 'scrapy_manual',\n    tenant_id: productData.tenant_id,\n    timestamp: new Date().toISOString()\n  };\n}"
+      },
+      "id": "process-scrapy-price",
+      "name": "Process Scrapy Price",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 240]
+    },    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge-price-results",
+      "name": "Merge Price Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2000, 180]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-extraction-success",
+      "name": "Check Extraction Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2220, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT current_price, previous_price FROM price_history WHERE tenant_id = $1 AND product_id = $2 ORDER BY created_at DESC LIMIT 1",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}"
+            },
+            {
+              "name": "product_id",
+              "value": "={{ $json.product_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-previous-price",
+      "name": "Get Previous Price",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2440, 120],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate price changes and apply markup rules\nconst currentData = $('Merge Price Results').item.json;\nconst previousData = $input.all()[0]?.json || {};\nconst markupRules = $('Extract Parameters').item.json.markup_rules || {};\n\nconst previousPrice = previousData.current_price || 0;\nconst currentPrice = currentData.current_price || 0;\n\n// Calculate price change\nconst priceChange = currentPrice - previousPrice;\nconst priceChangePercent = previousPrice > 0 ? ((priceChange / previousPrice) * 100) : 0;\n\n// Apply markup rules based on tenant configuration\nconst defaultMarkup = markupRules.default_markup_percent || 20;\nconst categoryMarkup = markupRules.category_markups || {};\nconst dynamicMarkup = markupRules.dynamic_markup || false;\n\nlet markupPercent = defaultMarkup;\n\n// Apply category-specific markup if available\nconst category = currentData.category || 'general';\nif (categoryMarkup[category]) {\n  markupPercent = categoryMarkup[category];\n}\n\n// Apply dynamic markup based on price trends\nif (dynamicMarkup && priceChangePercent < -10) {\n  // Increase markup when competitor prices drop significantly\n  markupPercent = Math.min(markupPercent * 1.2, 50);\n} else if (dynamicMarkup && priceChangePercent > 10) {\n  // Decrease markup when competitor prices rise\n  markupPercent = Math.max(markupPercent * 0.8, 5);\n}\n\n// Calculate suggested selling price\nconst suggestedPrice = currentPrice * (1 + markupPercent / 100);\n\n// Determine alert conditions\nconst alertConditions = {\n  significant_price_drop: priceChangePercent < -15,\n  significant_price_increase: priceChangePercent > 20,\n  availability_changed: previousData.availability !== currentData.availability,\n  first_time_tracking: !previousData.current_price\n};\n\nconst alertValues = Object.values(alertConditions);\nconst shouldAlert = Array.isArray(alertValues) && alertValues.some(condition => condition);\n\nreturn {\n  ...currentData,\n  previous_price: previousPrice,\n  price_change: priceChange,\n  price_change_percent: priceChangePercent,\n  markup_percent: markupPercent,\n  suggested_selling_price: suggestedPrice,\n  alert_conditions: alertConditions,\n  should_alert: shouldAlert,\n  analysis_timestamp: new Date().toISOString()\n};"
+      },
+      "id": "calculate-price-analysis",
+      "name": "Calculate Price Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 120]
+    },    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO price_history (tenant_id, product_id, product_name, url, title, current_price, previous_price, price_change, price_change_percent, currency, availability, markup_percent, suggested_selling_price, extraction_method, alert_conditions, raw_data, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.tenant_id }}"
+            },
+            {
+              "name": "product_id",
+              "value": "={{ $json.product_id }}"
+            },
+            {
+              "name": "product_name",
+              "value": "={{ $json.product_name }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "current_price",
+              "value": "={{ $json.current_price }}"
+            },
+            {
+              "name": "previous_price",
+              "value": "={{ $json.previous_price }}"
+            },
+            {
+              "name": "price_change",
+              "value": "={{ $json.price_change }}"
+            },
+            {
+              "name": "price_change_percent",
+              "value": "={{ $json.price_change_percent }}"
+            },
+            {
+              "name": "currency",
+              "value": "={{ $json.currency }}"
+            },
+            {
+              "name": "availability",
+              "value": "={{ $json.availability }}"
+            },
+            {
+              "name": "markup_percent",
+              "value": "={{ $json.markup_percent }}"
+            },
+            {
+              "name": "suggested_selling_price",
+              "value": "={{ $json.suggested_selling_price }}"
+            },
+            {
+              "name": "extraction_method",
+              "value": "={{ $json.extraction_method }}"
+            },
+            {
+              "name": "alert_conditions",
+              "value": "={{ JSON.stringify($json.alert_conditions) }}"
+            },
+            {
+              "name": "raw_data",
+              "value": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "store-price-data",
+      "name": "Store Price Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2880, 120],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-automation",
+          "name": "PostgreSQL Automation DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "alert-check",
+              "leftValue": "={{ $json.should_alert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-alert-needed",
+      "name": "Check Alert Needed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3100, 120]
+    },    {
+      "parameters": {
+        "jsCode": "// Generate alert notification based on price changes\nconst data = $input.all()[0].json;\nconst notificationSettings = $('Extract Parameters').item.json.notification_settings || {};\n\n// Build alert message\nlet alertMessage = `🚨 Price Alert: ${data.product_name}\\n\\n`;\n\nif (data.alert_conditions.significant_price_drop) {\n  alertMessage += `💰 Significant Price Drop: ${data.price_change_percent.toFixed(2)}%\\n`;\n}\nif (data.alert_conditions.significant_price_increase) {\n  alertMessage += `📈 Price Increase: ${data.price_change_percent.toFixed(2)}%\\n`;\n}\nif (data.alert_conditions.availability_changed) {\n  alertMessage += `📦 Availability Changed: ${data.availability}\\n`;\n}\nif (data.alert_conditions.first_time_tracking) {\n  alertMessage += `🆕 Now tracking this product\\n`;\n}\n\nalertMessage += `\\n💵 Current Price: ${data.currency} ${data.current_price}\\n`;\nif (data.previous_price > 0) {\n  alertMessage += `📊 Previous Price: ${data.currency} ${data.previous_price}\\n`;\n  alertMessage += `📉 Change: ${data.currency} ${data.price_change.toFixed(2)}\\n`;\n}\nalertMessage += `💼 Suggested Selling Price: ${data.currency} ${data.suggested_selling_price.toFixed(2)}\\n`;\nalertMessage += `🔗 Product URL: ${data.url}\\n\\n`;\nalertMessage += `⏰ ${new Date().toLocaleString()}`;\n\nreturn {\n  alert_message: alertMessage,\n  alert_type: 'price_change',\n  tenant_id: data.tenant_id,\n  product_id: data.product_id,\n  notification_channels: notificationSettings.channels || ['email'],\n  priority: data.alert_conditions.significant_price_drop ? 'high' : 'normal',\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "generate-price-alert",
+      "name": "Generate Price Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "email-channel-check",
+              "leftValue": "={{ $json.notification_channels.includes('email') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-email-notification",
+      "name": "Check Email Notification",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3540, 80]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $vars.EMAIL_FROM }}",
+        "toEmail": "={{ $('Extract Parameters').item.json.notification_settings.email || 'admin@your-domain.com' }}",
+        "subject": "🚨 Price Alert: {{ $('Calculate Price Analysis').item.json.product_name }}",
+        "text": "={{ $json.alert_message }}",
+        "html": "={{ '<pre>' + $json.alert_message + '</pre>' }}",
+        "options": {}
+      },
+      "id": "send-email-alert",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3760, 80],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-automation",
+          "name": "SMTP Automation"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mark-no-alert",
+              "name": "alert_sent",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mark-no-alert",
+      "name": "Mark No Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [3320, 160]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mark-alert-sent",
+              "name": "alert_sent",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mark-alert-sent",
+      "name": "Mark Alert Sent",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [3980, 80]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "final-merge",
+      "name": "Final Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [4200, 120]
+    },    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"error\": $json.error || \"Price extraction failed\", \"success\": false, \"product_id\": $json.product_id, \"timestamp\": new Date().toISOString()} }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-extraction-response",
+      "name": "Error Extraction Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Parameters": {
+      "main": [
+        [
+          {
+            "node": "Split Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Products": {
+      "main": [
+        [
+          {
+            "node": "Analyze Product Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Product Strategy": {
+      "main": [
+        [
+          {
+            "node": "Check Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Strategy": {
+      "main": [
+        [
+          {
+            "node": "Crawl4AI Price Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scrapy Price Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crawl4AI Price Extraction": {
+      "main": [
+        [
+          {
+            "node": "Process Crawl4AI Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrapy Price Extraction": {
+      "main": [
+        [
+          {
+            "node": "Process Scrapy Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Crawl4AI Price": {
+      "main": [
+        [
+          {
+            "node": "Merge Price Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Scrapy Price": {
+      "main": [
+        [
+          {
+            "node": "Merge Price Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },    "Merge Price Results": {
+      "main": [
+        [
+          {
+            "node": "Check Extraction Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Extraction Success": {
+      "main": [
+        [
+          {
+            "node": "Get Previous Price",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Extraction Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Previous Price": {
+      "main": [
+        [
+          {
+            "node": "Calculate Price Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Price Analysis": {
+      "main": [
+        [
+          {
+            "node": "Store Price Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Price Data": {
+      "main": [
+        [
+          {
+            "node": "Check Alert Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Alert Needed": {
+      "main": [
+        [
+          {
+            "node": "Generate Price Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark No Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Price Alert": {
+      "main": [
+        [
+          {
+            "node": "Check Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Email Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Mark Alert Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Alert Sent": {
+      "main": [
+        [
+          {
+            "node": "Final Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark No Alert": {
+      "main": [
+        [
+          {
+            "node": "Final Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "price-monitoring",
+      "name": "price-monitoring"
+    },
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "hybrid-scraping",
+      "name": "hybrid-scraping"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

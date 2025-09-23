@@ -1,0 +1,214 @@
+#!/bin/bash
+
+# Disk Space Monitor for N8N Automation Platform
+# Monitors data growth and provides cleanup recommendations
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+ALERT_THRESHOLD_GB=80  # Alert when any volume exceeds this size
+CRITICAL_THRESHOLD_GB=90  # Critical alert threshold
+LOG_FILE="/var/log/automation-disk-monitor.log"
+
+# Function to log with timestamp
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+}
+
+# Function to convert bytes to human readable format
+bytes_to_human() {
+    local bytes=$1
+    if [ $bytes -gt 1073741824 ]; then
+        echo "$(($bytes / 1073741824))GB"
+    elif [ $bytes -gt 1048576 ]; then
+        echo "$(($bytes / 1048576))MB"
+    elif [ $bytes -gt 1024 ]; then
+        echo "$(($bytes / 1024))KB"
+    else
+        echo "${bytes}B"
+    fi
+}
+
+# Function to check Docker volume sizes
+check_docker_volumes() {
+    echo -e "${BLUE}📊 Docker Volume Usage:${NC}"
+    echo "================================"
+    
+    # N8N Data Volume
+    local n8n_size=$(docker exec n8n_automation du -sb /home/node/.n8n 2>/dev/null | cut -f1 || echo "0")
+    local n8n_human=$(bytes_to_human $n8n_size)
+    
+    # PostgreSQL Data Volume
+    local postgres_size=$(docker exec postgres du -sb /var/lib/postgresql/data 2>/dev/null | cut -f1 || echo "0")
+    local postgres_human=$(bytes_to_human $postgres_size)
+    
+    # Redis Data Volume
+    local redis_size=$(docker exec redis du -sb /data 2>/dev/null | cut -f1 || echo "0")
+    local redis_human=$(bytes_to_human $redis_size)
+    
+    # Crawl4AI Cache Volume
+    local crawl4ai_size=$(docker exec crawl4ai du -sb /app/cache 2>/dev/null | cut -f1 || echo "0")
+    local crawl4ai_human=$(bytes_to_human $crawl4ai_size)
+    
+    echo "N8N Data:      $n8n_human"
+    echo "PostgreSQL:    $postgres_human"
+    echo "Redis:         $redis_human"
+    echo "Crawl4AI:      $crawl4ai_human"
+    echo ""
+    
+    # Check for alerts
+    local n8n_gb=$(($n8n_size / 1073741824))
+    local postgres_gb=$(($postgres_size / 1073741824))
+    local crawl4ai_gb=$(($crawl4ai_size / 1073741824))
+    
+    if [ $n8n_gb -gt $CRITICAL_THRESHOLD_GB ]; then
+        echo -e "${RED}🚨 CRITICAL: N8N data volume is ${n8n_human}${NC}"
+        log "CRITICAL: N8N data volume exceeded ${CRITICAL_THRESHOLD_GB}GB: ${n8n_human}"
+    elif [ $n8n_gb -gt $ALERT_THRESHOLD_GB ]; then
+        echo -e "${YELLOW}⚠️  WARNING: N8N data volume is ${n8n_human}${NC}"
+        log "WARNING: N8N data volume exceeded ${ALERT_THRESHOLD_GB}GB: ${n8n_human}"
+    fi
+    
+    if [ $postgres_gb -gt $ALERT_THRESHOLD_GB ]; then
+        echo -e "${YELLOW}⚠️  WARNING: PostgreSQL data is ${postgres_human}${NC}"
+        log "WARNING: PostgreSQL data exceeded ${ALERT_THRESHOLD_GB}GB: ${postgres_human}"
+    fi
+    
+    if [ $crawl4ai_gb -gt $ALERT_THRESHOLD_GB ]; then
+        echo -e "${YELLOW}⚠️  WARNING: Crawl4AI cache is ${crawl4ai_human}${NC}"
+        log "WARNING: Crawl4AI cache exceeded ${ALERT_THRESHOLD_GB}GB: ${crawl4ai_human}"
+    fi
+}
+
+# Function to check database sizes
+check_database_sizes() {
+    echo -e "${BLUE}🗄️  Database Table Sizes:${NC}"
+    echo "================================"
+    
+    docker exec postgres psql -U n8n -d n8n -c "
+    SELECT 
+        schemaname,
+        tablename,
+        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size,
+        pg_total_relation_size(schemaname||'.'||tablename) as size_bytes
+    FROM pg_tables 
+    WHERE schemaname = 'public' 
+    ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
+    LIMIT 10;" 2>/dev/null || echo "Database connection failed"
+    echo ""
+}
+
+# Function to check execution data
+check_execution_data() {
+    echo -e "${BLUE}🔄 Execution Data Statistics:${NC}"
+    echo "================================"
+    
+    docker exec postgres psql -U n8n -d n8n -c "
+    SELECT 
+        COUNT(*) as total_executions,
+        COUNT(*) FILTER (WHERE \"createdAt\" > NOW() - INTERVAL '24 hours') as last_24h,
+        COUNT(*) FILTER (WHERE \"createdAt\" > NOW() - INTERVAL '7 days') as last_7_days,
+        pg_size_pretty(pg_total_relation_size('execution_entity')) as execution_table_size,
+        AVG(LENGTH(data::text))::int as avg_execution_size_bytes
+    FROM execution_entity;" 2>/dev/null || echo "Database connection failed"
+    echo ""
+}
+
+# Function to provide cleanup recommendations
+provide_cleanup_recommendations() {
+    echo -e "${BLUE}🧹 Cleanup Recommendations:${NC}"
+    echo "================================"
+    
+    # Check old executions
+    local old_executions=$(docker exec postgres psql -U n8n -d n8n -t -c "
+    SELECT COUNT(*) FROM execution_entity WHERE \"createdAt\" < NOW() - INTERVAL '7 days';" 2>/dev/null | tr -d ' ' || echo "0")
+    
+    if [ "$old_executions" -gt 100 ]; then
+        echo -e "${YELLOW}• Clean old executions: $old_executions executions older than 7 days${NC}"
+        echo "  Command: docker exec postgres psql -U n8n -d n8n -c \"DELETE FROM execution_entity WHERE createdAt < NOW() - INTERVAL '7 days';\""
+    fi
+    
+    # Check Crawl4AI cache
+    local cache_files=$(docker exec crawl4ai find /app/cache -type f 2>/dev/null | wc -l || echo "0")
+    if [ "$cache_files" -gt 1000 ]; then
+        echo -e "${YELLOW}• Clear Crawl4AI cache: $cache_files cached files${NC}"
+        echo "  Command: docker exec crawl4ai rm -rf /app/cache/*"
+    fi
+    
+    # Check scraping results
+    local scraping_results=$(docker exec postgres psql -U n8n -d n8n -t -c "
+    SELECT COUNT(*) FROM scraping_results WHERE created_at < NOW() - INTERVAL '30 days';" 2>/dev/null | tr -d ' ' || echo "0")
+    
+    if [ "$scraping_results" -gt 0 ]; then
+        echo -e "${YELLOW}• Clean old scraping results: $scraping_results results older than 30 days${NC}"
+        echo "  Command: docker exec postgres psql -U n8n -d n8n -c \"DELETE FROM scraping_results WHERE created_at < NOW() - INTERVAL '30 days';\""
+    fi
+    
+    echo ""
+    echo -e "${GREEN}✅ Automated cleanup is configured with current settings:${NC}"
+    echo "• Executions auto-delete after 7 days (N8N_EXECUTIONS_DATA_MAX_AGE=168 hours)"
+    echo "• Binary data auto-delete after 24 hours (N8N_BINARY_DATA_TTL=24)"
+    echo "• Only first successful execution saved (N8N_EXECUTIONS_DATA_SAVE_ON_SUCCESS=first)"
+    echo ""
+}
+
+# Function to show disk usage
+show_disk_usage() {
+    echo -e "${BLUE}💽 VPS Disk Usage:${NC}"
+    echo "================================"
+    df -h / | tail -1
+    echo ""
+}
+
+# Main execution
+main() {
+    echo "🔍 N8N Automation Platform - Disk Space Monitor"
+    echo "================================================"
+    echo "Scan time: $(date)"
+    echo ""
+    
+    show_disk_usage
+    check_docker_volumes
+    check_database_sizes
+    check_execution_data
+    provide_cleanup_recommendations
+    
+    log "Disk space monitoring completed"
+}
+
+# Run with different options
+case "${1:-}" in
+    "--volumes-only")
+        check_docker_volumes
+        ;;
+    "--database-only")
+        check_database_sizes
+        check_execution_data
+        ;;
+    "--cleanup-only")
+        provide_cleanup_recommendations
+        ;;
+    "--silent")
+        main > /dev/null 2>&1
+        ;;
+    "--help")
+        echo "Usage: $0 [--volumes-only|--database-only|--cleanup-only|--silent|--help]"
+        echo ""
+        echo "Options:"
+        echo "  --volumes-only    Check only Docker volume sizes"
+        echo "  --database-only   Check only database sizes and execution data"
+        echo "  --cleanup-only    Show only cleanup recommendations"
+        echo "  --silent          Run silently (log only)"
+        echo "  --help           Show this help message"
+        ;;
+    *)
+        main
+        ;;
+esac

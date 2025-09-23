@@ -1,0 +1,513 @@
+{
+  "name": "Telegram Bot Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-webhook",
+        "responseMode": "responseNode"
+      },
+      "id": "telegram-webhook-node",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [480, 160],
+      "webhookId": "telegram-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant-validation",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "{{ $env.CLIENT_TENANT_ID || 'default' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-tenant-node",
+      "name": "Validate Tenant",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 160]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "chatId": "={{ $json.message.chat.id }}",
+        "messageId": "={{ $json.message.message_id }}"
+      },
+      "id": "get-message-node",
+      "name": "Get Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [880, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "command-check",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/start",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-command-node",
+      "name": "Check Command",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1080, 100]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "🤖 Welcome to {{ $env.CLIENT_TENANT_ID || 'Default' }} Bot!\n\nAvailable commands:\n/start - Show this welcome message\n/help - Get help\n/status - Check bot status\n\nI'm here to assist you with automation tasks!",
+        "additionalFields": {
+          "parseMode": "Markdown",
+          "replyMarkup": {
+            "inlineKeyboard": [
+              [
+                {
+                  "text": "📋 Help",
+                  "callbackData": "help"
+                },
+                {
+                  "text": "⚙️ Settings",
+                  "callbackData": "settings"
+                }
+              ]
+            ]
+          }
+        }
+      },
+      "id": "send-welcome-node",
+      "name": "Send Welcome Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1280, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "help-command-check",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/help",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-help-command-node",
+      "name": "Check Help Command",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1280, 140]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "📋 *Help - {{ $env.CLIENT_TENANT_ID || 'Default' }} Bot*\n\n*Available Commands:*\n/start - Welcome message\n/help - This help message\n/status - Bot status\n/notify - Send notification\n/settings - Configure preferences\n\n*Features:*\n• Automated notifications\n• Custom workflows\n• Multi-tenant support\n• Secure message handling\n\n*Support:* Contact your system administrator for assistance.",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "send-help-node",
+      "name": "Send Help Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1480, 140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "callback-check",
+              "leftValue": "={{ $json.callback_query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-callback-node",
+      "name": "Check Callback Query",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 240]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerCallback",
+        "queryId": "={{ $json.callback_query.id }}",
+        "additionalFields": {
+          "text": "Processing your request..."
+        }
+      },
+      "id": "answer-callback-node",
+      "name": "Answer Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "help-callback-check",
+              "leftValue": "={{ $json.callback_query.data }}",
+              "rightValue": "help",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-help-callback-node",
+      "name": "Check Help Callback",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1280, 240]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "chatId": "={{ $json.callback_query.message.chat.id }}",
+        "messageId": "={{ $json.callback_query.message.message_id }}",
+        "text": "📋 *Quick Help*\n\nThis bot helps you with:\n• Receiving notifications\n• Managing automation workflows\n• Accessing system status\n\nUse /help for detailed commands.",
+        "additionalFields": {
+          "parseMode": "Markdown",
+          "replyMarkup": {
+            "inlineKeyboard": [
+              [
+                {
+                  "text": "🔙 Back",
+                  "callbackData": "back"
+                }
+              ]
+            ]
+          }
+        }
+      },
+      "id": "edit-help-message-node",
+      "name": "Edit Help Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1480, 240]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "value": "={{ $json.tenant_id }}",
+        "options": {}
+      },
+      "id": "log-interaction-node",
+      "name": "Log Interaction",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [880, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "notification-trigger-check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "send_notification",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-notification-trigger-node",
+      "name": "Check Notification Trigger",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1080, 380]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "📢 *{{ $json.title || 'Notification' }}*\n\n{{ $json.message }}\n\n_Sent at: {{ $now.toDateTime() }}_",
+        "additionalFields": {
+          "parseMode": "Markdown",
+          "disableNotification": false
+        }
+      },
+      "id": "send-notification-node",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1280, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Telegram bot interaction processed\",\n  \"tenant_id\": \"{{ $json.tenant_id }}\",\n  \"timestamp\": \"{{ $now.toDateTime() }}\",\n  \"action\": \"{{ $json.action || 'message_received' }}\"\n}"
+      },
+      "id": "webhook-response-node",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1480, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Unauthorized tenant\",\n  \"tenant_id\": \"{{ $json.tenant_id }}\",\n  \"timestamp\": \"{{ $now.toDateTime() }}\"\n}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "unauthorized-response-node",
+      "name": "Unauthorized Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [880, 320]
+    }
+  ],
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tenant": {
+      "main": [
+        [
+          {
+            "node": "Get Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Callback Query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Message": {
+      "main": [
+        [
+          {
+            "node": "Check Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Command": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Help Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Help Command": {
+      "main": [
+        [
+          {
+            "node": "Send Help Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback": {
+      "main": [
+        [
+          {
+            "node": "Check Help Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Help Callback": {
+      "main": [
+        [
+          {
+            "node": "Edit Help Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Interaction": {
+      "main": [
+        [
+          {
+            "node": "Check Notification Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Notification Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "webhook-error-handler"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "telegram-automation",
+      "name": "Telegram Bot"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-18T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,117 @@
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Docker volumes and data
+docker-data/
+volumes/
+
+# N8N specific
+.n8n/
+n8n_data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+backups/
+*.backup
+*.dump
+*.sql.gz
+
+# AWS credentials (should be in environment)
+.aws/
+aws-credentials.json
+
+# SSL certificates
+certs/
+*.pem
+*.key
+*.crt
+
+# Archive files
+*.tar.gz
+*.zip
+*.rar
+
+# Local configuration overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Secrets and private keys
+secrets/
+private/
+*.secret
+id_rsa*
+id_ecdsa*
+id_ed25519*
+
+# Deployment checkpoints
+deployment-checkpoint.json
+
+# Test files
+test-results/
+coverage/
+.nyc_output/
+
+# Cache directories
+.cache/
+.parcel-cache/
+__pycache__/
+
+# Dependency directories (if any Node.js components)
+node_modules/
+jspm_packages/
+
+# Local workspace files
+.history/
+.claude/
+
+# Image files
+*.jpeg
+*.jpg
+*.png
+*.gif

@@ -1,0 +1,102 @@
+# Git and version control
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# Test files
+test-results/
+coverage/
+.nyc_output/
+
+# Backup files
+backups/
+*.backup
+*.dump
+
+# Local development files
+docker-compose.override.yml
+docker-compose.local.yml
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Scripts that don't need to be in container
+scripts/backup-*.sh
+scripts/deploy-*.sh
+
+# Local workspace files
+.history/
+.claude/
+
+# Archive files
+*.tar.gz
+*.zip
+*.rar
+
+# Node.js (if applicable)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Python (if applicable)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+
+# AWS credentials
+.aws/
+aws-credentials.json
+
+# SSL certificates (should be mounted as volumes)
+certs/
+*.pem
+*.key
+*.crt
+
+# Large data files that should be mounted as volumes
+data/
+volumes/
+
+# Image files
+*.jpeg
+*.jpg
+*.png
+*.gif

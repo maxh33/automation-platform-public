@@ -1,0 +1,612 @@
+{
+  "name": "Multi-Email Daily Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger-node",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant-validation",
+              "leftValue": "={{ $env.CLIENT_TENANT_ID || 'default' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-tenant-node",
+      "name": "Validate Tenant",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "value": "={{ $now.toFormat('yyyy-MM-dd') }}",
+        "options": {}
+      },
+      "id": "set-date-node",
+      "name": "Set Current Date",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/gmail",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-gmail-credentials-node",
+      "name": "Get Gmail Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [860, 200]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/outlook",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-outlook-credentials-node",
+      "name": "Get Outlook Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/zoho",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-zoho-credentials-node",
+      "name": "Get Zoho Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [860, 400]
+    },    {
+      "parameters": {
+        "operation": "getAll",
+        "filters": {
+          "receivedAfter": "={{ $now.minus({days: 1}).toISO() }}",
+          "hasAttachment": false
+        },
+        "options": {
+          "maxResults": 50
+        }
+      },
+      "id": "fetch-gmail-node",
+      "name": "Fetch Gmail Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [1060, 200],
+      "credentials": {
+        "gmailOAuth2": "={{ $node['Get Gmail Credentials'].json['client_id'] }}"
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "folderName": "INBOX",
+        "filters": {
+          "receivedAfter": "={{ $now.minus({days: 1}).toISO() }}"
+        },
+        "options": {
+          "maxResults": 50
+        }
+      },
+      "id": "fetch-outlook-node",
+      "name": "Fetch Outlook Messages",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 1,
+      "position": [1060, 300],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": "={{ $node['Get Outlook Credentials'].json['client_id'] }}"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "filters": {
+          "receivedAfter": "={{ $now.minus({days: 1}).toISO() }}"
+        },
+        "options": {
+          "maxResults": 50
+        }
+      },
+      "id": "fetch-zoho-node",
+      "name": "Fetch Zoho Messages",
+      "type": "n8n-nodes-base.zohoMail",
+      "typeVersion": 1,
+      "position": [1060, 400],
+      "credentials": {
+        "zohoMailOAuth2Api": "={{ $node['Get Zoho Credentials'].json['client_id'] }}"
+      }
+    },    {
+      "parameters": {
+        "operation": "merge",
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-emails-node",
+      "name": "Merge All Emails",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [1260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-emails-check",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-emails-exist-node",
+      "name": "Check Emails Exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter and categorize emails by importance and sender\nconst emails = $input.all();\nconst categorizedEmails = {\n  important: [],\n  business: [],\n  personal: [],\n  newsletters: [],\n  unread: [],\n  total: emails.length\n};\n\n// Important keywords and domains\nconst importantKeywords = ['urgent', 'asap', 'important', 'critical', 'deadline', 'meeting', 'invoice', 'payment'];\nconst businessDomains = ['company.com', 'corp.com', 'business.com'];\nconst newsletterKeywords = ['newsletter', 'unsubscribe', 'marketing', 'promotion'];\n\nfor (const email of emails) {\n  const subject = (email.json.subject || '').toLowerCase();\n  const sender = (email.json.sender || email.json.from || '').toLowerCase();\n  const isUnread = email.json.unread || email.json.isRead === false;\n  \n  if (isUnread) {\n    categorizedEmails.unread.push(email.json);\n  }\n  \n  // Check for important emails\n  if (importantKeywords.some(keyword => subject.includes(keyword))) {\n    categorizedEmails.important.push(email.json);\n  }\n  // Check for business emails\n  else if (businessDomains.some(domain => sender.includes(domain))) {\n    categorizedEmails.business.push(email.json);\n  }\n  // Check for newsletters\n  else if (newsletterKeywords.some(keyword => subject.includes(keyword) || sender.includes(keyword))) {\n    categorizedEmails.newsletters.push(email.json);\n  }\n  // Default to personal\n  else {\n    categorizedEmails.personal.push(email.json);\n  }\n}\n\nreturn [{ json: categorizedEmails }];"
+      },
+      "id": "categorize-emails-node",
+      "name": "Categorize Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 300]
+    },    {
+      "parameters": {
+        "prompt": "Create a professional daily email summary based on the following categorized emails:\n\nTotal Emails: {{ $json.total }}\nUnread Emails: {{ $json.unread.length }}\nImportant Emails: {{ $json.important.length }}\nBusiness Emails: {{ $json.business.length }}\nPersonal Emails: {{ $json.personal.length }}\nNewsletters: {{ $json.newsletters.length }}\n\nIMPORTANT EMAILS:\n{% for email in $json.important %}\n- From: {{ email.sender || email.from }}\n- Subject: {{ email.subject }}\n- Preview: {{ email.snippet || email.preview || 'No preview available' }}\n\n{% endfor %}\n\nBUSINESS EMAILS:\n{% for email in $json.business %}\n- From: {{ email.sender || email.from }}\n- Subject: {{ email.subject }}\n- Preview: {{ email.snippet || email.preview || 'No preview available' }}\n\n{% endfor %}\n\nPlease provide:\n1. Executive summary of key emails requiring action\n2. Priority recommendations for follow-up\n3. Brief overview of remaining emails by category\n4. Any urgent items that need immediate attention\n\nFormat the response as a professional daily briefing.",
+        "model": "gpt-3.5-turbo",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1000
+        }
+      },
+      "id": "generate-summary-node",
+      "name": "Generate AI Summary",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1860, 300]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/notification-settings",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-notification-settings-node",
+      "name": "Get Notification Settings",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [2060, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "email-notification-check",
+              "leftValue": "={{ $node['Get Notification Settings'].json['email_enabled'] }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-email-notification-node",
+      "name": "Check Email Notification",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2260, 200]
+    },    {
+      "parameters": {
+        "fromEmail": "{{ $env.EMAIL_FROM || 'noreply@your-domain.com' }}",
+        "toEmail": "={{ $node['Get Notification Settings'].json['email_recipient'] }}",
+        "subject": "📧 Daily Email Summary - {{ $now.toFormat('MMMM dd, yyyy') }}",
+        "text": "",
+        "html": "<html><body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'><div style='max-width: 600px; margin: 0 auto; padding: 20px;'><h1 style='color: #2c5aa0; border-bottom: 2px solid #2c5aa0; padding-bottom: 10px;'>📧 Daily Email Summary</h1><p style='font-size: 16px; margin-bottom: 20px;'><strong>Date:</strong> {{ $now.toFormat('MMMM dd, yyyy') }}<br><strong>Client:</strong> {{ $env.CLIENT_TENANT_ID || 'Default' }}</p><div style='background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;'><h2 style='color: #495057; margin-top: 0;'>📊 Summary Statistics</h2><ul style='margin: 0; padding-left: 20px;'><li><strong>Total Emails:</strong> {{ $node['Categorize Emails'].json['total'] }}</li><li><strong>Unread:</strong> {{ $node['Categorize Emails'].json['unread'].length }}</li><li><strong>Important:</strong> {{ $node['Categorize Emails'].json['important'].length }}</li><li><strong>Business:</strong> {{ $node['Categorize Emails'].json['business'].length }}</li><li><strong>Personal:</strong> {{ $node['Categorize Emails'].json['personal'].length }}</li><li><strong>Newsletters:</strong> {{ $node['Categorize Emails'].json['newsletters'].length }}</li></ul></div><div style='margin-bottom: 30px;'><h2 style='color: #dc3545;'>🚨 AI Summary & Recommendations</h2><div style='background: white; border-left: 4px solid #dc3545; padding: 15px; white-space: pre-line;'>{{ $node['Generate AI Summary'].json['choices'][0]['message']['content'] }}</div></div><div style='text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; color: #6c757d; font-size: 12px;'><p>Generated by {{ $env.CLIENT_TENANT_ID || 'Default' }} Automation Platform<br>{{ $now.toDateTime() }}</p></div></div></body></html>",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "send-email-summary-node",
+      "name": "Send Email Summary",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2460, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "telegram-notification-check",
+              "leftValue": "={{ $node['Get Notification Settings'].json['telegram_enabled'] }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-telegram-notification-node",
+      "name": "Check Telegram Notification",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2260, 400]
+    },    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $node['Get Notification Settings'].json['telegram_chat_id'] }}",
+        "text": "📧 *Daily Email Summary* - {{ $now.toFormat('MMMM dd, yyyy') }}\\n\\n📊 *Statistics:*\\n• Total: {{ $node['Categorize Emails'].json['total'] }} emails\\n• Unread: {{ $node['Categorize Emails'].json['unread'].length }}\\n• Important: {{ $node['Categorize Emails'].json['important'].length }}\\n• Business: {{ $node['Categorize Emails'].json['business'].length }}\\n• Personal: {{ $node['Categorize Emails'].json['personal'].length }}\\n• Newsletters: {{ $node['Categorize Emails'].json['newsletters'].length }}\\n\\n🤖 *AI Summary:*\\n{{ $node['Generate AI Summary'].json['choices'][0]['message']['content'] | slice(0, 800) }}...\\n\\n_Full detailed report sent via email._",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "send-telegram-summary-node",
+      "name": "Send Telegram Summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "value": "={{ $now.toDateTime() }}",
+        "options": {}
+      },
+      "id": "log-execution-node",
+      "name": "Log Execution",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\\n  \\\"success\\\": false,\\n  \\\"error\\\": \\\"No emails found for summary\\\",\\n  \\\"date\\\": \\\"{{ $now.toFormat('yyyy-MM-dd') }}\\\",\\n  \\\"tenant_id\\\": \\\"{{ $env.CLIENT_TENANT_ID || 'default' }}\\\",\\n  \\\"timestamp\\\": \\\"{{ $now.toDateTime() }}\\\"\\n}",
+        "options": {
+          "responseCode": 204
+        }
+      },
+      "id": "no-emails-response-node",
+      "name": "No Emails Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1660, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\\n  \\\"success\\\": false,\\n  \\\"error\\\": \\\"Unauthorized tenant for email summary\\\",\\n  \\\"tenant_id\\\": \\\"{{ $env.CLIENT_TENANT_ID }}\\\",\\n  \\\"timestamp\\\": \\\"{{ $now.toDateTime() }}\\\"\\n}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "unauthorized-tenant-response-node",
+      "name": "Unauthorized Tenant Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 500]
+    }  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tenant": {
+      "main": [
+        [
+          {
+            "node": "Set Current Date",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Tenant Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Current Date": {
+      "main": [
+        [
+          {
+            "node": "Get Gmail Credentials",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Outlook Credentials",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Zoho Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Gmail Credentials": {
+      "main": [
+        [
+          {
+            "node": "Fetch Gmail Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Outlook Credentials": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outlook Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Zoho Credentials": {
+      "main": [
+        [
+          {
+            "node": "Fetch Zoho Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },    "Fetch Gmail Messages": {
+      "main": [
+        [
+          {
+            "node": "Merge All Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Outlook Messages": {
+      "main": [
+        [
+          {
+            "node": "Merge All Emails",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Zoho Messages": {
+      "main": [
+        [
+          {
+            "node": "Merge All Emails",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge All Emails": {
+      "main": [
+        [
+          {
+            "node": "Check Emails Exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Emails Exist": {
+      "main": [
+        [
+          {
+            "node": "Categorize Emails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Emails Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorize Emails": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Summary": {
+      "main": [
+        [
+          {
+            "node": "Get Notification Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },    "Get Notification Settings": {
+      "main": [
+        [
+          {
+            "node": "Check Email Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Email Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Email Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Telegram Notification": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Summary": {
+      "main": [
+        [
+          {
+            "node": "Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Summary": {
+      "main": [
+        [
+          {
+            "node": "Log Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "webhook-error-handler"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "email-automation",
+      "name": "Email Summary"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-18T00:00:00.000Z",
+  "versionId": "1"
+}

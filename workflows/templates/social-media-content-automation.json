@@ -1,0 +1,488 @@
+{
+  "name": "Social Media Content Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-content-trigger-node",
+      "name": "Daily Content Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tenant-validation",
+              "leftValue": "={{ $env.CLIENT_TENANT_ID || 'default' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-tenant-node",
+      "name": "Validate Tenant",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/business-context",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-business-context-node",
+      "name": "Get Business Context",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://trends.googleapis.com/trends/api/dailytrends",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "hl",
+              "value": "en-US"
+            },
+            {
+              "name": "tz",
+              "value": "-180"
+            },
+            {
+              "name": "geo",
+              "value": "{{ $node['Get Business Context'].json['target_country'] || 'US' }}"
+            },
+            {
+              "name": "ns",
+              "value": "15"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-trending-topics-node",
+      "name": "Fetch Trending Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [860, 200],
+      "credentials": {
+        "httpHeaderAuth": "google-trends-api"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and filter trending topics relevant to business\nconst trendsData = $input.first().json;\nconst businessContext = $node['Get Business Context'].json;\nconst businessKeywords = (businessContext.keywords || '').toLowerCase().split(',');\nconst businessIndustry = (businessContext.industry || '').toLowerCase();\n\nlet relevantTrends = [];\n\nif (trendsData.default && trendsData.default.trendingSearchesDays) {\n  const today = trendsData.default.trendingSearchesDays[0];\n  \n  if (today && today.trendingSearches) {\n    relevantTrends = today.trendingSearches.filter(trend => {\n      const title = (trend.title.query || '').toLowerCase();\n      const isRelevant = businessKeywords.some(keyword => \n        title.includes(keyword.trim())\n      ) || title.includes(businessIndustry);\n      \n      return isRelevant && trend.formattedTraffic;\n    }).slice(0, 5); // Top 5 relevant trends\n  }\n}\n\n// If no relevant trends found, use general business trends\nif (relevantTrends.length === 0) {\n  relevantTrends = [\n    {\n      title: { query: `${businessIndustry} trends` },\n      formattedTraffic: '10K+',\n      relatedQueries: []\n    }\n  ];\n}\n\nreturn [{\n  json: {\n    trends: relevantTrends,\n    business_context: businessContext,\n    date: new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "filter-relevant-trends-node",
+      "name": "Filter Relevant Trends",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 200]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "gpt-4",
+        "messages": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a professional social media content creator. Create engaging, platform-appropriate posts based on trending topics and business context. Always include relevant hashtags and call-to-action."
+            },
+            {
+              "role": "user",
+              "content": "Business Context:\n- Company: {{ $json.business_context.company_name }}\n- Industry: {{ $json.business_context.industry }}\n- Target Audience: {{ $json.business_context.target_audience }}\n- Brand Voice: {{ $json.business_context.brand_voice || 'Professional and engaging' }}\n- Key Messages: {{ $json.business_context.key_messages }}\n\nTrending Topics:\n{% for trend in $json.trends %}\n- {{ trend.title.query }} ({{ trend.formattedTraffic }})\n{% endfor %}\n\nCreate 3 different social media posts (Instagram, LinkedIn, Facebook) that:\n1. Connect the most relevant trending topic to the business\n2. Provide value to the target audience\n3. Include platform-appropriate hashtags\n4. Have clear call-to-action\n5. Maintain the brand voice\n\nFormat as JSON:\n{\n  \"instagram\": {\n    \"caption\": \"Your Instagram post here\",\n    \"hashtags\": \"#hashtag1 #hashtag2\"\n  },\n  \"linkedin\": {\n    \"caption\": \"Your LinkedIn post here\",\n    \"hashtags\": \"#hashtag1 #hashtag2\"\n  },\n  \"facebook\": {\n    \"caption\": \"Your Facebook post here\",\n    \"hashtags\": \"#hashtag1 #hashtag2\"\n  }\n}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 1500
+        }
+      },
+      "id": "generate-ai-content-node",
+      "name": "Generate AI Content",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1260, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI generated content and prepare for posting\nconst aiResponse = $input.first().json;\nlet contentData;\n\ntry {\n  // Extract JSON from AI response\n  const jsonMatch = aiResponse.choices[0].message.content.match(/{[\\s\\S]*}/);\n  if (jsonMatch) {\n    contentData = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No valid JSON found in AI response');\n  }\n} catch (error) {\n  // Fallback content if AI parsing fails\n  const businessContext = $node['Get Business Context'].json;\n  const trendingTopic = $node['Filter Relevant Trends'].json.trends[0]?.title?.query || 'industry trends';\n  \n  contentData = {\n    instagram: {\n      caption: `🚀 Staying ahead of ${trendingTopic} trends! ${businessContext.company_name} is here to help you navigate the latest developments in ${businessContext.industry}. What's your take on this trend?`,\n      hashtags: `#${businessContext.industry.replace(/\\s+/g, '')} #trends #innovation #business`\n    },\n    linkedin: {\n      caption: `The latest trends in ${trendingTopic} are reshaping our industry. At ${businessContext.company_name}, we're committed to staying at the forefront of ${businessContext.industry} innovation. How are these trends impacting your business strategy?`,\n      hashtags: `#${businessContext.industry.replace(/\\s+/g, '')} #BusinessTrends #Innovation #Leadership`\n    },\n    facebook: {\n      caption: `🔥 Hot topic alert: ${trendingTopic}! We're seeing exciting developments in ${businessContext.industry}. ${businessContext.company_name} is ready to help you leverage these trends. Share your thoughts below!`,\n      hashtags: `#${businessContext.industry.replace(/\\s+/g, '')} #Trending #Community #Growth`\n    }\n  };\n}\n\n// Add business context and metadata\nreturn [\n  {\n    json: {\n      ...contentData,\n      tenant_id: $env.CLIENT_TENANT_ID || 'default',\n      date: new Date().toISOString(),\n      trending_topic: $node['Filter Relevant Trends'].json.trends[0]?.title?.query || 'general trends',\n      business_name: $node['Get Business Context'].json.company_name\n    }\n  }\n];"
+      },
+      "id": "parse-content-node",
+      "name": "Parse AI Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 200]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/instagram",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-instagram-credentials-node",
+      "name": "Get Instagram Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [1660, 100]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/facebook",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-facebook-credentials-node",
+      "name": "Get Facebook Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [1660, 200]
+    },
+    {
+      "parameters": {
+        "resource": "secret",
+        "operation": "get",
+        "secretId": "n8n/clients/{{ $env.CLIENT_TENANT_ID || 'default' }}/linkedin",
+        "region": "{{ $env.AWS_DEFAULT_REGION || 'us-east-1' }}"
+      },
+      "id": "get-linkedin-credentials-node",
+      "name": "Get LinkedIn Credentials",
+      "type": "n8n-nodes-base.aws",
+      "typeVersion": 1,
+      "position": [1660, 300]
+    },
+    {
+      "parameters": {
+        "resource": "media",
+        "operation": "upload",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ $json.instagram.caption }}\\n\\n{{ $json.instagram.hashtags }}\\n\\n#{{ $json.business_name.replace(/\\s+/g, '') }} #automation"
+        }
+      },
+      "id": "post-instagram-node",
+      "name": "Post to Instagram",
+      "type": "n8n-nodes-base.instagram",
+      "typeVersion": 1,
+      "position": [1860, 100],
+      "credentials": {
+        "instagramOAuth2Api": "={{ $node['Get Instagram Credentials'].json['access_token'] }}"
+      }
+    },
+    {
+      "parameters": {
+        "resource": "page",
+        "operation": "post",
+        "pageId": "={{ $node['Get Facebook Credentials'].json['page_id'] }}",
+        "content": "={{ $json.facebook.caption }}\\n\\n{{ $json.facebook.hashtags }}"
+      },
+      "id": "post-facebook-node",
+      "name": "Post to Facebook",
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [1860, 200],
+      "credentials": {
+        "facebookGraphApi": "={{ $node['Get Facebook Credentials'].json['access_token'] }}"
+      }
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "text": "={{ $json.linkedin.caption }}\\n\\n{{ $json.linkedin.hashtags }}",
+        "additionalFields": {
+          "visibility": "PUBLIC"
+        }
+      },
+      "id": "post-linkedin-node",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1860, 300],
+      "credentials": {
+        "linkedInOAuth2Api": "={{ $node['Get LinkedIn Credentials'].json['access_token'] }}"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "social_media_posts",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenant_id": "={{ $json.tenant_id }}",
+            "platform": "multiple",
+            "content_type": "trending_content",
+            "trending_topic": "={{ $json.trending_topic }}",
+            "instagram_content": "={{ $json.instagram.caption }}",
+            "facebook_content": "={{ $json.facebook.caption }}",
+            "linkedin_content": "={{ $json.linkedin.caption }}",
+            "created_at": "={{ $json.date }}",
+            "status": "published"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "log-posts-database-node",
+      "name": "Log Posts to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2060, 200],
+      "credentials": {
+        "postgres": "n8n-database"
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\\n  \\\"success\\\": false,\\n  \\\"error\\\": \\\"Unauthorized tenant for content automation\\\",\\n  \\\"tenant_id\\\": \\\"{{ $env.CLIENT_TENANT_ID }}\\\",\\n  \\\"timestamp\\\": \\\"{{ $now.toDateTime() }}\\\"\\n}",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "unauthorized-response-node",
+      "name": "Unauthorized Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 500]
+    }
+  ],
+  "connections": {
+    "Daily Content Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tenant": {
+      "main": [
+        [
+          {
+            "node": "Get Business Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Business Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Trending Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Trending Topics": {
+      "main": [
+        [
+          {
+            "node": "Filter Relevant Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Relevant Trends": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Content": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Content": {
+      "main": [
+        [
+          {
+            "node": "Get Instagram Credentials",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Facebook Credentials",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get LinkedIn Credentials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Instagram Credentials": {
+      "main": [
+        [
+          {
+            "node": "Post to Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Facebook Credentials": {
+      "main": [
+        [
+          {
+            "node": "Post to Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get LinkedIn Credentials": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Instagram": {
+      "main": [
+        [
+          {
+            "node": "Log Posts to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Facebook": {
+      "main": [
+        [
+          {
+            "node": "Log Posts to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Log Posts to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "timezone": "America/Sao_Paulo",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "webhook-error-handler"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "marketing-automation",
+      "name": "Marketing Automation"
+    },
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "trending-content",
+      "name": "Trending Content"
+    },
+    {
+      "createdAt": "2025-09-18T00:00:00.000Z",
+      "updatedAt": "2025-09-18T00:00:00.000Z",
+      "id": "ai-generated",
+      "name": "AI Generated"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-09-18T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,397 @@
+{
+  "name": "Social Media Content Publishing",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "85a07b7d-69cf-4bfb-96a8-55f4aa076b4b",
+      "name": "When clicking 'Execute Workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-content",
+        "responseMode": "responseNode"
+      },
+      "id": "5a6f7b8e-9d0c-4e5f-8a9b-2c3d4e5f6789",
+      "name": "Content Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [480, 160],
+      "webhookId": "client-content-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1e5e7a4-8b3a-4f5c-9d8e-1a2b3c4d5e6f",
+              "leftValue": "={{ $json.tenant_id }}",
+              "rightValue": "{{ $env.CLIENT_TENANT_ID || 'default' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7890-abcd-ef1234567890",
+      "name": "Validate Tenant",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 230]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.instagram.com/v18.0/{{ $env.INSTAGRAM_ACCOUNT_ID }}/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.image_url }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.caption }}\n\n#automation #yourcompany #kodalabs"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $credentials.instagramAccessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9f8e7d6c-5b4a-3918-2716-0f1e2d3c4b5a",
+      "name": "Create Instagram Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 160],
+      "credentials": {
+        "instagramApi": {
+          "id": "client-instagram-credentials",
+          "name": "Client Instagram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.instagram.com/v18.0/{{ $env.INSTAGRAM_ACCOUNT_ID }}/media_publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $credentials.instagramAccessToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8e7d6c5b-4a39-2817-1605-f0e1d2c3b4a5",
+      "name": "Publish Instagram Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 160],
+      "credentials": {
+        "instagramApi": {
+          "id": "client-instagram-credentials",
+          "name": "Client Instagram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "authentication": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContent": "={\n  \"author\": \"urn:li:person:{{ $env.LINKEDIN_PERSON_ID }}\",\n  \"lifecycleState\": \"PUBLISHED\",\n  \"specificContent\": {\n    \"com.linkedin.ugc.ShareContent\": {\n      \"shareCommentary\": {\n        \"text\": \"{{ $json.caption }}\"\n      },\n      \"shareMediaCategory\": \"IMAGE\",\n      \"media\": [\n        {\n          \"status\": \"READY\",\n          \"description\": {\n            \"text\": \"{{ $json.alt_text || 'Professional content' }}\"\n          },\n          \"media\": \"{{ $json.linkedin_media_urn }}\",\n          \"title\": {\n            \"text\": \"{{ $json.title || 'Professional Update' }}\"\n          }\n        }\n      ]\n    }\n  },\n  \"visibility\": {\n    \"com.linkedin.ugc.MemberNetworkVisibility\": \"PUBLIC\"\n  }\n}",
+        "options": {}
+      },
+      "id": "7d6c5b4a-3928-1716-0504-e0d1c2b3a495",
+      "name": "LinkedIn Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 320],
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "client-linkedin-credentials",
+          "name": "Client LinkedIn API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "oAuth1Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContent": "={\n  \"text\": \"{{ $json.caption.substring(0, 280) }}\",\n  \"media\": {\n    \"media_ids\": [\"{{ $json.twitter_media_id }}\"]\n  }\n}",
+        "options": {}
+      },
+      "id": "6c5b4a39-2817-0615-f403-d0c1b2a39485",
+      "name": "Twitter Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 480],
+      "credentials": {
+        "twitterOAuth1Api": {
+          "id": "client-twitter-credentials",
+          "name": "Client Twitter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "social_posts",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tenant_id": "={{ $json.tenant_id }}",
+            "platform": "={{ $json.platform }}",
+            "post_id": "={{ $json.id }}",
+            "content": "={{ $json.caption }}",
+            "image_url": "={{ $json.image_url }}",
+            "status": "published",
+            "published_at": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "5b4a3928-1706-f514-e302-c0b1a2938475",
+      "name": "Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1360, 300],
+      "credentials": {
+        "postgres": {
+          "id": "n8n-postgres",
+          "name": "N8N Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Content published successfully\",\n  \"platforms\": {{ $json.platforms }},\n  \"timestamp\": \"{{ new Date().toISOString() }}\",\n  \"tenant_id\": \"{{ $json.tenant_id }}\"\n}",
+        "options": {}
+      },
+      "id": "4a392817-06f5-14e3-02c0-b1a29384756c",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1580, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Unauthorized: Invalid tenant ID\",\n  \"timestamp\": \"{{ new Date().toISOString() }}\"\n}",
+        "responseCode": 403,
+        "options": {}
+      },
+      "id": "39281706-f514-e302-c0b1-a29384756c5d",
+      "name": "Unauthorized Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [920, 600]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Content Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Tenant": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Media",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LinkedIn Post",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Twitter Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Media": {
+      "main": [
+        [
+          {
+            "node": "Publish Instagram Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Instagram Post": {
+      "main": [
+        [
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn Post": {
+      "main": [
+        [
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Post": {
+      "main": [
+        [
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Database": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "",
+      "name": ""
+    }
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "automation-platform-template"
+  },
+  "id": "social-media-posting-template",
+  "tags": [
+    {
+      "createdAt": "2024-09-16T00:00:00.000Z",
+      "updatedAt": "2024-09-16T00:00:00.000Z",
+      "id": "template",
+      "name": "Template"
+    },
+    {
+      "createdAt": "2024-09-16T00:00:00.000Z",
+      "updatedAt": "2024-09-16T00:00:00.000Z",
+      "id": "social-media",
+      "name": "Social Media"
+    },
+    {
+      "createdAt": "2024-09-16T00:00:00.000Z",
+      "updatedAt": "2024-09-16T00:00:00.000Z",
+      "id": "multi-tenant",
+      "name": "Multi-Tenant"
+    }
+  ]
+}
