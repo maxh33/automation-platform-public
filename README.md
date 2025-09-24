@@ -72,6 +72,57 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 - **Health Check**: http://localhost:5678/healthz
 - **Crawl4AI Service**: http://localhost:11235
 
+## 🧪 Local Development Demo
+
+### Crawl4AI Service Verification
+
+The Crawl4AI service provides a powerful web scraping playground that you can access immediately after starting the platform. The service demonstrates AI-powered content extraction with streaming capabilities.
+
+![Crawl4AI Playground](public/images/crawl4Ai.png)
+*Crawl4AI playground showing successful web scraping with streaming enabled and fast response times*
+
+**Key Features Demonstrated:**
+- **Interactive Playground**: Test web scraping at `http://localhost:11235/playground/`
+- **Streaming Response**: Real-time content extraction with `stream=True`
+- **Cache Management**: Flexible caching with `CacheMode.BYPASS` for fresh data
+- **Fast Performance**: Typical response times under 1500ms
+- **Rich Content Extraction**: Complete HTML and structured data extraction
+
+### Platform Status Verification
+
+![Docker N8N Platform](public/images/docker-n8n.png)
+*N8N automation platform running on Docker with all services healthy*
+
+**Service Health Status:**
+- ✅ **N8N**: Running on port 5678 with full workflow capabilities
+- ✅ **PostgreSQL**: Database connection established and healthy
+- ✅ **Redis**: Queue management and session storage active
+- ✅ **Crawl4AI**: Web scraping service running on port 11235
+
+### Quick Verification Steps
+
+1. **Start the Platform**:
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Verify All Services**:
+   ```bash
+   # Check N8N health
+   curl http://localhost:5678/healthz
+
+   # Check Crawl4AI service
+   curl http://localhost:11235/health
+
+   # View container status
+   docker compose ps
+   ```
+
+3. **Test Integration**:
+   - Access N8N interface: http://localhost:5678
+   - Test Crawl4AI playground: http://localhost:11235/playground/
+   - Import workflow templates from `./workflows/templates/`
+
 ## 🏗️ Architecture
 
 ### Service Components
@@ -230,10 +281,36 @@ Comprehensive backup solution:
 3. Select templates from `./workflows/templates/`
 4. Configure tenant-specific settings and credentials
 
-### Popular Templates to Try First
-1. **Social Media Content Automation**: `social-media-content-automation.json`
-2. **WhatsApp Business Automation**: `whatsapp-business-automation.json`
-3. **AI Web Scraper**: `ai-web-scraper-automation.json`
+### ✅ Verified Working Templates
+
+All workflow templates have been tested and cleaned up to ensure proper loading and functionality:
+
+1. **AI-Powered Web Scraper**: `ai-web-scraper-automation.json` ✅
+   - Integrates with Crawl4AI service for intelligent content extraction
+   - Multi-tenant webhook support with validation
+   - AI-enhanced data processing capabilities
+
+2. **Email Summary Automation**: `email-summary-automation.json` ✅
+   - Automated email report generation
+   - Template-based content formatting
+   - Scheduled execution support
+
+3. **Enterprise Web Crawler**: `enterprise-web-crawler.json` ✅
+   - Large-scale web scraping for enterprise use
+   - Advanced data extraction and processing
+   - Rate limiting and error handling
+
+4. **Hybrid Price Monitoring**: `hybrid-price-monitoring.json` ✅
+   - Multi-source price tracking automation
+   - Alert system integration
+   - Historical data management
+
+5. **Social Media Posting**: `social-media-posting.json` ✅
+   - Multi-platform content distribution
+   - Scheduled posting capabilities
+   - Analytics integration support
+
+**Note**: These templates have undergone cleanup and verification to ensure they load properly in N8N without configuration errors.
 
 ### Webhook Configuration
 Configure webhooks using the pattern:
