@@ -111,7 +111,3 @@ jspm_packages/
 .claude/
 
 # Image files
-*.jpeg
-*.jpg
-*.png
-*.gif
